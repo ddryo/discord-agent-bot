@@ -31,6 +31,9 @@ const BLOCKED_PATHS = ["/", "/etc", "/sys", "/proc", "/dev", "/boot", "/sbin", "
 
 export async function handleMessage(message: Message): Promise<void> {
   if (message.author.bot) return;
+  // ThreadCreated 等のシステムメッセージを無視（スレッド作成時に親チャンネルへ誤送信される問題の対策）
+  // Default, Reply, ChatInputCommand, ContextMenuCommand 以外の全 MessageType が除外される
+  if (message.system) return;
   if (!isAuthorizedUser(message.author.id)) {
     logger.debug(`Unauthorized user: ${message.author.tag} (${message.author.id})`);
     return;

@@ -169,7 +169,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
         // exitCode !== 0 && !hasContent && !isRetry → sendMessage 側でリトライ判定
 
         this.emit("idle", name);
-        resolve({ resultReceived: hasContent, exitCode });
+        resolve({ resultReceived, exitCode });
       });
 
       proc.run(text);
