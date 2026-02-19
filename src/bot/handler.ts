@@ -1,15 +1,31 @@
 import { stat } from "fs/promises";
 import { resolve } from "path";
 import type { Message, ThreadChannel } from "discord.js";
+import { EmbedBuilder } from "discord.js";
 import { config, expandTilde } from "../config.ts";
 import { createLogger } from "../logger.ts";
-import { createSession, hasSession, sendInput } from "../tmux/manager.ts";
+import { createSession, hasSession, killSession, sendInput } from "../tmux/manager.ts";
 import { sessionStore } from "../sessions/store.ts";
 import type { OutputWatcher } from "../tmux/watcher.ts";
+import { getPendingInteraction, handleAskUserTextResponse } from "./interactions.ts";
 
 const logger = createLogger("bot:handler");
 
 const MAIN_SESSION_NAME = "main";
+
+/** 対応する CLI コマンド一覧 */
+const SUPPORTED_COMMANDS = ["clear", "compact", "cost", "context", "status", "model"];
+
+/** watcher への参照（index.ts から setWatcher で設定） */
+let watcher: OutputWatcher | null = null;
+
+/**
+ * OutputWatcher の参照を設定する。
+ * index.ts から呼び出し、handler 内で watcher.unwatch() 等を利用可能にする。
+ */
+export function setWatcher(w: OutputWatcher): void {
+  watcher = w;
+}
 
 /** パストラバーサル防止: システムディレクトリへのセッション作成をブロック */
 const BLOCKED_PATHS = ["/", "/etc", "/sys", "/proc", "/dev", "/boot", "/sbin", "/bin", "/usr/sbin", "/usr/bin"];
@@ -43,6 +59,18 @@ export async function handleMessage(message: Message): Promise<void> {
       threadId: null,
       isMain: true,
     });
+  }
+
+  // コマンド判定
+  if (text.startsWith("/")) {
+    await handleCommand(message, MAIN_SESSION_NAME, null, text);
+    return;
+  }
+
+  // AskUser 待ちの場合はテキスト返答として処理
+  if (getPendingInteraction(MAIN_SESSION_NAME) === "ask_user") {
+    await handleAskUserTextResponse(MAIN_SESSION_NAME, text);
+    return;
   }
 
   // Claude CLI にメッセージを送信
@@ -90,8 +118,95 @@ async function handleThreadMessage(message: Message): Promise<void> {
     `Thread message from ${message.author.tag} in ${threadId}: ${text.substring(0, 80)}`,
   );
 
+  // コマンド判定
+  if (text.startsWith("/")) {
+    await handleCommand(message, session.name, threadId, text);
+    return;
+  }
+
+  // AskUser 待ちの場合はテキスト返答として処理
+  if (getPendingInteraction(session.name) === "ask_user") {
+    await handleAskUserTextResponse(session.name, text);
+    return;
+  }
+
   // 対応する tmux セッションにメッセージを送信
   await sendInput(session.name, text);
+}
+
+/**
+ * コマンドを解析し、対応する処理を実行する。
+ * @param message - Discord メッセージ
+ * @param sessionName - 対象の tmux セッション名
+ * @param threadId - スレッドID（メインセッションの場合は null）
+ * @param text - メッセージ全文（"/" から始まる）
+ */
+async function handleCommand(
+  message: Message,
+  sessionName: string,
+  threadId: string | null,
+  text: string,
+): Promise<void> {
+  // コマンド名と引数を分離
+  const spaceIndex = text.indexOf(" ");
+  const commandName = (spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex)).toLowerCase();
+
+  // /exit は特別処理（T-M3-5）
+  if (commandName === "exit") {
+    await handleExitCommand(message, sessionName, threadId);
+    return;
+  }
+
+  // 対応コマンドチェック
+  if (!SUPPORTED_COMMANDS.includes(commandName)) {
+    await message.reply(`未対応のコマンドです: \`/${commandName}\``);
+    return;
+  }
+
+  logger.info(`Command: /${commandName} (session: ${sessionName})`);
+
+  // CLI にそのまま送信（Claude CLI がスラッシュコマンドとして認識する）
+  await sendInput(sessionName, text);
+
+  // /clear の特別処理: 区切り Embed を投稿
+  if (commandName === "clear") {
+    const embed = new EmbedBuilder()
+      .setDescription("--- Context Cleared ---")
+      .setColor(0x5865f2)
+      .setTimestamp();
+
+    await message.reply({ embeds: [embed] });
+  }
+}
+
+/**
+ * /exit コマンドの処理。tmux セッションを終了し、関連リソースをクリーンアップする。
+ */
+async function handleExitCommand(
+  message: Message,
+  sessionName: string,
+  threadId: string | null,
+): Promise<void> {
+  logger.info(`Exit command: session=${sessionName}, threadId=${threadId ?? "main"}`);
+
+  // tmux セッション終了
+  await killSession(sessionName);
+
+  // SessionStore からセッション情報を削除
+  sessionStore.removeSession(threadId);
+
+  // OutputWatcher の監視を停止
+  if (watcher) {
+    watcher.unwatch(sessionName);
+  }
+
+  // 終了メッセージを Discord に投稿
+  const embed = new EmbedBuilder()
+    .setDescription("セッションを終了しました。")
+    .setColor(0xed4245)
+    .setTimestamp();
+
+  await message.reply({ embeds: [embed] });
 }
 
 /**

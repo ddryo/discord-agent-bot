@@ -1,4 +1,4 @@
-import type { OutputEvent, OutputEventType } from "../types.ts";
+import type { OutputEvent, OutputEventType, ToolApprovalInfo, AskUserInfo } from "../types.ts";
 
 /**
  * ANSI エスケープシーケンスを除去する
@@ -54,11 +54,147 @@ function detectSessionEnd(cleanText: string): boolean {
 }
 
 /**
+ * ツール許可待ちパターンを検出する
+ *
+ * Claude CLI のツール許可待ち出力パターン:
+ * ```
+ * ─── Tool Use ──────────────────
+ * Tool: Bash
+ *   command: npm install
+ *
+ * Do you want to proceed?
+ *   1. Yes
+ *   2. Yes, and don't ask again for this tool
+ *   3. No
+ *
+ * (Use arrow keys or type your choice)
+ * >
+ * ```
+ */
+export function detectToolApproval(cleanText: string): ToolApprovalInfo | null {
+  // "Do you want to proceed?" が含まれているか確認
+  if (!/Do you want to proceed\?/i.test(cleanText)) {
+    return null;
+  }
+
+  const lines = cleanText.split("\n");
+
+  // ツール名を抽出（"Tool: XXX" パターン）
+  let tool = "";
+  const descriptionLines: string[] = [];
+  let foundTool = false;
+
+  for (const line of lines) {
+    const toolMatch = line.match(/^\s*Tool:\s*(.+)$/);
+    if (toolMatch) {
+      tool = toolMatch[1]!.trim();
+      foundTool = true;
+      continue;
+    }
+    // Tool行の後、空行またはDo you want行までを説明として取得
+    if (foundTool && !/Do you want to proceed\?/i.test(line)) {
+      const trimmed = line.trim();
+      if (trimmed) {
+        descriptionLines.push(trimmed);
+      } else if (descriptionLines.length > 0) {
+        // 空行が来たら説明の収集を終了
+        break;
+      }
+    }
+    if (/Do you want to proceed\?/i.test(line)) {
+      break;
+    }
+  }
+
+  if (!tool) {
+    return null;
+  }
+
+  // 選択肢を抽出（番号付き行）
+  const options: string[] = [];
+  const optionRegex = /^\s*(\d+)\.\s+(.+)$/;
+  for (const line of lines) {
+    const optMatch = line.match(optionRegex);
+    if (optMatch) {
+      options.push(optMatch[2]!.trim());
+    }
+  }
+
+  return {
+    tool,
+    description: descriptionLines.length > 0 ? descriptionLines.join("\n") : undefined,
+    options,
+  };
+}
+
+/**
+ * AskUserQuestion パターンを検出する
+ *
+ * Claude CLI の AskUserQuestion 出力パターン:
+ * ```
+ *   ? Which option do you prefer?
+ *     1. Option A
+ *     2. Option B
+ *     3. Other
+ *
+ * (Use arrow keys or type your choice)
+ * >
+ * ```
+ */
+export function detectAskUser(cleanText: string): AskUserInfo | null {
+  const lines = cleanText.split("\n");
+
+  // "?" で始まる質問行を検出
+  let question = "";
+  for (const line of lines) {
+    const questionMatch = line.match(/^\s*\?\s+(.+)$/);
+    if (questionMatch) {
+      question = questionMatch[1]!.trim();
+      break;
+    }
+  }
+
+  if (!question) {
+    return null;
+  }
+
+  // "(Use arrow keys or type your choice)" が含まれているか確認
+  // これがないと通常のテキスト出力と誤検知する可能性がある
+  if (!/\(Use arrow keys or type your choice\)/i.test(cleanText)) {
+    return null;
+  }
+
+  // 選択肢を抽出（番号付き行）
+  const options: string[] = [];
+  const optionRegex = /^\s*(\d+)\.\s+(.+)$/;
+  let foundQuestion = false;
+  for (const line of lines) {
+    if (/^\s*\?\s+/.test(line)) {
+      foundQuestion = true;
+      continue;
+    }
+    if (foundQuestion) {
+      const optMatch = line.match(optionRegex);
+      if (optMatch) {
+        options.push(optMatch[2]!.trim());
+      }
+    }
+  }
+
+  return {
+    question,
+    options: options.length > 0 ? options : undefined,
+  };
+}
+
+/**
  * raw テキストを OutputEvent 配列に変換する
  *
- * M1 では以下のパターンのみ検出:
- * - idle: 入力待ちプロンプト
+ * 検出パターン:
+ * - tool_approval: ツール許可待ち（最優先）
+ * - ask_user: AskUserQuestion
  * - session_end: セッション終了
+ * - idle: 入力待ちプロンプト
  * - text: 上記以外の通常テキスト
  */
 export function parseOutput(rawText: string): OutputEvent[] {
@@ -67,6 +203,31 @@ export function parseOutput(rawText: string): OutputEvent[] {
   const events: OutputEvent[] = [];
 
   if (!cleanText.trim()) {
+    return events;
+  }
+
+  // 優先順位: tool_approval > ask_user > session_end > idle > text
+  const toolApproval = detectToolApproval(cleanText);
+  if (toolApproval) {
+    events.push({
+      type: "tool_approval",
+      content: cleanText,
+      raw: rawText,
+      timestamp: now,
+      metadata: toolApproval,
+    });
+    return events;
+  }
+
+  const askUser = detectAskUser(cleanText);
+  if (askUser) {
+    events.push({
+      type: "ask_user",
+      content: cleanText,
+      raw: rawText,
+      timestamp: now,
+      metadata: askUser,
+    });
     return events;
   }
 
