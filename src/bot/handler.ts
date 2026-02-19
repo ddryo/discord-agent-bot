@@ -1,4 +1,4 @@
-import { statSync } from "fs";
+import { stat } from "fs/promises";
 import { resolve } from "path";
 import type { Message, ThreadChannel } from "discord.js";
 import { config, expandTilde } from "../config.ts";
@@ -10,6 +10,9 @@ import type { OutputWatcher } from "../tmux/watcher.ts";
 const logger = createLogger("bot:handler");
 
 const MAIN_SESSION_NAME = "main";
+
+/** パストラバーサル防止: システムディレクトリへのセッション作成をブロック */
+const BLOCKED_PATHS = ["/", "/etc", "/sys", "/proc", "/dev", "/boot", "/sbin", "/bin", "/usr/sbin", "/usr/bin"];
 
 export async function handleMessage(message: Message): Promise<void> {
   // Bot 自身のメッセージは無視
@@ -29,11 +32,17 @@ export async function handleMessage(message: Message): Promise<void> {
 
   logger.info(`Message from ${message.author.tag}: ${text.substring(0, 80)}`);
 
-  // メインセッションが存在しなければ作成
+  // メインセッションが存在しなければ再作成・再登録
   const sessionExists = await hasSession(MAIN_SESSION_NAME);
   if (!sessionExists) {
     logger.info("Main session not found, creating...");
     await createSession(MAIN_SESSION_NAME, config.defaultCwd);
+    sessionStore.registerSession(null, {
+      name: MAIN_SESSION_NAME,
+      cwd: config.defaultCwd,
+      threadId: null,
+      isMain: true,
+    });
   }
 
   // Claude CLI にメッセージを送信
@@ -101,6 +110,13 @@ export async function handleThreadCreate(
   if (thread.parentId !== config.discordChannelId) return;
 
   const threadId = thread.id;
+
+  // 重複セッション作成を防止
+  if (sessionStore.getSession(threadId)) {
+    logger.warn(`Session already exists for thread: ${threadId}`);
+    return;
+  }
+
   const rawPath = thread.name;
 
   logger.info(`Thread created: ${threadId} (title: "${rawPath}")`);
@@ -109,10 +125,19 @@ export async function handleThreadCreate(
   const expandedPath = expandTilde(rawPath);
   const resolvedPath = resolve(expandedPath);
 
+  // システムディレクトリへのアクセスをブロック
+  if (BLOCKED_PATHS.includes(resolvedPath)) {
+    logger.warn(`Blocked system path: ${resolvedPath}`);
+    await thread.send(
+      `エラー: システムディレクトリ \`${resolvedPath}\` は使用できません。`,
+    );
+    return;
+  }
+
   // パスの存在・ディレクトリチェック
   try {
-    const stat = statSync(resolvedPath);
-    if (!stat.isDirectory()) {
+    const stats = await stat(resolvedPath);
+    if (!stats.isDirectory()) {
       logger.warn(`Path is not a directory: ${resolvedPath}`);
       await thread.send(
         `エラー: パス \`${rawPath}\` はディレクトリではありません。有効なディレクトリパスをスレッドタイトルに指定してください。`,

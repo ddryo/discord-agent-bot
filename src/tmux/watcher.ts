@@ -8,7 +8,7 @@ import type { OutputEvent } from "../types.ts";
 const logger = createLogger("watcher");
 
 interface WatcherEntry {
-  timer: ReturnType<typeof setInterval>;
+  timer: ReturnType<typeof setTimeout>;
   lastContent: string;
 }
 
@@ -19,13 +19,16 @@ export interface OutputWatcherEvents {
 /**
  * tmux セッションの出力を定期的にポーリングし、
  * 差分を検出してイベントとして発火する。
+ *
+ * sessionName はプレフィックスなしの名前（例: "main", threadId）。
+ * manager.ts の各関数が内部で ccbot- プレフィックスを付与する。
  */
 export class OutputWatcher extends EventEmitter<OutputWatcherEvents> {
   private sessions = new Map<string, WatcherEntry>();
 
   /**
    * 指定セッションの出力監視を開始する。
-   * pollIntervalMs ごとに capturePane を実行し、差分を検出する。
+   * 前回の poll 完了後に次のポーリングをスケジュールする（再帰 setTimeout 方式）。
    */
   watch(sessionName: string): void {
     if (this.sessions.has(sessionName)) {
@@ -36,13 +39,12 @@ export class OutputWatcher extends EventEmitter<OutputWatcherEvents> {
     logger.info(`Start watching session: ${sessionName}`);
 
     const entry: WatcherEntry = {
-      timer: setInterval(() => {
-        void this.poll(sessionName);
-      }, config.pollIntervalMs),
+      timer: setTimeout(() => undefined, 0),
       lastContent: "",
     };
 
     this.sessions.set(sessionName, entry);
+    this.scheduleNext(sessionName);
   }
 
   /**
@@ -55,7 +57,7 @@ export class OutputWatcher extends EventEmitter<OutputWatcherEvents> {
     }
 
     logger.info(`Stop watching session: ${sessionName}`);
-    clearInterval(entry.timer);
+    clearTimeout(entry.timer);
     this.sessions.delete(sessionName);
   }
 
@@ -63,9 +65,25 @@ export class OutputWatcher extends EventEmitter<OutputWatcherEvents> {
    * 全セッションの監視を停止する。
    */
   unwatchAll(): void {
-    for (const [sessionName] of this.sessions) {
-      this.unwatch(sessionName);
+    const names = [...this.sessions.keys()];
+    for (const name of names) {
+      this.unwatch(name);
     }
+  }
+
+  /**
+   * 次のポーリングをスケジュールする。
+   * 前回の poll 完了後に呼ばれ、重複実行を防止する。
+   */
+  private scheduleNext(sessionName: string): void {
+    const entry = this.sessions.get(sessionName);
+    if (!entry) return;
+
+    entry.timer = setTimeout(() => {
+      void this.poll(sessionName).finally(() => {
+        this.scheduleNext(sessionName);
+      });
+    }, config.pollIntervalMs);
   }
 
   /**

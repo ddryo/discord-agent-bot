@@ -55,6 +55,10 @@ export async function sendInput(name: string, text: string): Promise<void> {
   await runTmux(["send-keys", "-t", sessionName, "Enter"]);
 }
 
+/**
+ * 特殊キー（Escape, Enter, C-c 等）を tmux セッションに送信する。
+ * -l（literal）フラグは意図的に使用しない（tmux がキー名を解釈する必要があるため）。
+ */
 export async function sendKeys(name: string, keys: string): Promise<void> {
   const sessionName = `${SESSION_PREFIX}${name}`;
   await runTmux(["send-keys", "-t", sessionName, keys]);

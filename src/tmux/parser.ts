@@ -7,7 +7,7 @@ export function stripAnsi(text: string): string {
   // ESC[ ... m (SGR), ESC[ ... letter (CSI全般), ESC] ... BEL/ST (OSC), ESC( (文字セット)
   return text.replace(
     // eslint-disable-next-line no-control-regex
-    /\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\(./g,
+    /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\(./g,
     "",
   );
 }
@@ -93,6 +93,7 @@ export function parseOutput(rawText: string): OutputEvent[] {
       });
     }
 
+    // session_end を idle より優先（同時検出時はセッション終了として扱う）
     events.push({
       type: isSessionEnd ? "session_end" : "idle",
       content: lines[lines.length - 1] ?? "",

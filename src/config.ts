@@ -1,12 +1,5 @@
 import { homedir } from "os";
-
-interface Config {
-  discordBotToken: string;
-  discordChannelId: string;
-  discordUserId: string | undefined;
-  defaultCwd: string;
-  pollIntervalMs: number;
-}
+import type { Config } from "./types.ts";
 
 export function expandTilde(path: string): string {
   if (path.startsWith("~/")) {

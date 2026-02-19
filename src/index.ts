@@ -29,6 +29,7 @@ async function main(): Promise<void> {
   await createSession(MAIN_SESSION_NAME, config.defaultCwd);
 
   // 3. SessionStore にメインセッションを登録
+  // メインセッションは await createSession() 後に登録するため readyPromise は不要
   sessionStore.registerSession(null, {
     name: MAIN_SESSION_NAME,
     cwd: config.defaultCwd,
@@ -36,11 +37,24 @@ async function main(): Promise<void> {
     isMain: true,
   });
 
-  // 4. OutputWatcher を起動してメインセッションを監視
+  // 4. OutputWatcher を作成（ログイン後に監視開始）
   const watcher = new OutputWatcher();
-  watcher.watch(MAIN_SESSION_NAME);
 
-  // 5. OutputWatcher の "output" イベントで Discord に投稿
+  // 5. messageCreate で handler を呼ぶ
+  discord.onMessage((message) => {
+    void handleMessage(message);
+  });
+
+  // 6. threadCreate でスレッドセッションを起動
+  discord.onThreadCreate((thread, newlyCreated) => {
+    void handleThreadCreate(thread, newlyCreated, watcher);
+  });
+
+  // 7. Discord クライアントにログイン
+  await discord.login();
+
+  // 8. OutputWatcher の "output" イベントで Discord に投稿
+  //    ログイン後に登録し、チャンネルキャッシュが利用可能な状態で動作させる
   watcher.on("output", (sessionName: string, events: OutputEvent[]) => {
     void (async () => {
       let target: TextChannel | ThreadChannel | undefined;
@@ -69,22 +83,17 @@ async function main(): Promise<void> {
         if (event.type === "text" && event.content) {
           await sendToDiscord(target, event.content);
         }
+        // TODO(M3): tool_approval → Embed + ボタンで通知・応答処理
+        // TODO(M3): ask_user → 質問 + 選択肢で通知・応答処理
+        // TODO(M3): session_end → セッション終了通知
+        // TODO(M3): error → エラー通知
       }
     })();
   });
 
-  // 6. messageCreate で handler を呼ぶ
-  discord.onMessage((message) => {
-    void handleMessage(message);
-  });
+  // 9. メインセッションの監視開始（ログイン完了後に開始）
+  watcher.watch(MAIN_SESSION_NAME);
 
-  // 7. threadCreate でスレッドセッションを起動
-  discord.onThreadCreate((thread, newlyCreated) => {
-    void handleThreadCreate(thread, newlyCreated, watcher);
-  });
-
-  // 8. Discord クライアントにログイン
-  await discord.login();
   logger.info("Bot is ready");
 }
 

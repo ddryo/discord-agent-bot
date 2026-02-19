@@ -4,7 +4,7 @@ import { createLogger } from "../logger.ts";
 const logger = createLogger("bot:responder");
 
 const DISCORD_MAX_LENGTH = 2000;
-const CODE_FENCE_RESERVE = 5; // "\n```" の分を予約
+const CODE_FENCE_RESERVE = 5; // コードブロック閉じ補正の余裕分（"\n```\n" 等）
 
 /**
  * Discord チャンネルまたはスレッドにテキストを投稿する。
@@ -113,7 +113,7 @@ function fixCodeBlocks(
  * テキスト内のコードフェンス（```）の数を数える。
  */
 function countCodeFences(text: string): number {
-  const matches = text.match(/^```/gm);
+  const matches = text.match(/^\s*```/gm);
   return matches ? matches.length : 0;
 }
 
@@ -126,10 +126,10 @@ function findLastOpenFenceLang(text: string): string {
   let isOpen = false;
 
   for (const line of lines) {
-    if (/^```/.test(line)) {
+    if (/^\s*```/.test(line)) {
       if (!isOpen) {
         // 開きフェンス: 言語指定を抽出
-        const langMatch = line.match(/^```(\S*)/);
+        const langMatch = line.match(/^\s*```(\S*)/);
         openLang = langMatch?.[1] ?? "";
         isOpen = true;
       } else {
