@@ -7,7 +7,7 @@ import { createLogger } from "../logger.ts";
 import { createSession, hasSession, killSession, sendInput } from "../tmux/manager.ts";
 import { sessionStore } from "../sessions/store.ts";
 import type { OutputWatcher } from "../tmux/watcher.ts";
-import { getPendingInteraction, handleAskUserTextResponse } from "./interactions.ts";
+import { getPendingInteraction, clearPendingInteraction, handleAskUserTextResponse } from "./interactions.ts";
 
 const logger = createLogger("bot:handler");
 
@@ -69,7 +69,11 @@ export async function handleMessage(message: Message): Promise<void> {
 
   // AskUser 待ちの場合はテキスト返答として処理
   if (getPendingInteraction(MAIN_SESSION_NAME) === "ask_user") {
-    await handleAskUserTextResponse(MAIN_SESSION_NAME, text);
+    try {
+      await handleAskUserTextResponse(MAIN_SESSION_NAME, text);
+    } catch {
+      await message.reply("エラー: 回答の送信に失敗しました。再度メッセージを送信してください。");
+    }
     return;
   }
 
@@ -126,7 +130,11 @@ async function handleThreadMessage(message: Message): Promise<void> {
 
   // AskUser 待ちの場合はテキスト返答として処理
   if (getPendingInteraction(session.name) === "ask_user") {
-    await handleAskUserTextResponse(session.name, text);
+    try {
+      await handleAskUserTextResponse(session.name, text);
+    } catch {
+      await message.reply("エラー: 回答の送信に失敗しました。再度メッセージを送信してください。");
+    }
     return;
   }
 
@@ -188,6 +196,9 @@ async function handleExitCommand(
   threadId: string | null,
 ): Promise<void> {
   logger.info(`Exit command: session=${sessionName}, threadId=${threadId ?? "main"}`);
+
+  // 待機中インタラクションをクリア
+  clearPendingInteraction(sessionName);
 
   // tmux セッション終了
   await killSession(sessionName);

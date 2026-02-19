@@ -1,4 +1,4 @@
-import type { OutputEvent, OutputEventType, ToolApprovalInfo, AskUserInfo } from "../types.ts";
+import type { OutputEvent, ToolApprovalInfo, AskUserInfo } from "../types.ts";
 
 /**
  * ANSI エスケープシーケンスを除去する
@@ -110,13 +110,20 @@ export function detectToolApproval(cleanText: string): ToolApprovalInfo | null {
     return null;
   }
 
-  // 選択肢を抽出（番号付き行）
+  // 選択肢を抽出（"Do you want to proceed?" より後の番号付き行のみ）
   const options: string[] = [];
   const optionRegex = /^\s*(\d+)\.\s+(.+)$/;
+  let afterPrompt = false;
   for (const line of lines) {
-    const optMatch = line.match(optionRegex);
-    if (optMatch) {
-      options.push(optMatch[2]!.trim());
+    if (/Do you want to proceed\?/i.test(line)) {
+      afterPrompt = true;
+      continue;
+    }
+    if (afterPrompt) {
+      const optMatch = line.match(optionRegex);
+      if (optMatch) {
+        options.push(optMatch[2]!.trim());
+      }
     }
   }
 

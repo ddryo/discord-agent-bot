@@ -5,7 +5,7 @@ import { sessionStore } from "./sessions/store.ts";
 import { createDiscordClient } from "./bot/client.ts";
 import { handleMessage, handleThreadCreate, setWatcher } from "./bot/handler.ts";
 import { sendToDiscord } from "./bot/responder.ts";
-import { handleInteraction, sendToolApproval, sendAskUser } from "./bot/interactions.ts";
+import { handleInteraction, sendToolApproval, sendAskUser, getPendingInteraction } from "./bot/interactions.ts";
 import type { ToolApprovalInfo, AskUserInfo } from "./types.ts";
 import { createSession, hasSession, killSession } from "./tmux/manager.ts";
 import { OutputWatcher } from "./tmux/watcher.ts";
@@ -93,9 +93,14 @@ async function main(): Promise<void> {
         if (event.type === "text" && event.content) {
           await sendToDiscord(target, event.content);
         } else if (event.type === "tool_approval" && event.metadata) {
-          await sendToolApproval(target, sessionName, event.metadata as ToolApprovalInfo);
+          // 既に pending の場合は重複通知をスキップ
+          if (!getPendingInteraction(sessionName)) {
+            await sendToolApproval(target, sessionName, event.metadata as ToolApprovalInfo);
+          }
         } else if (event.type === "ask_user" && event.metadata) {
-          await sendAskUser(target, sessionName, event.metadata as AskUserInfo);
+          if (!getPendingInteraction(sessionName)) {
+            await sendAskUser(target, sessionName, event.metadata as AskUserInfo);
+          }
         }
         // TODO(M4): session_end → セッション終了通知
         // TODO(M4): error → エラー通知
