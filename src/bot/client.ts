@@ -3,6 +3,7 @@ import {
   GatewayIntentBits,
   type Message,
   type Interaction,
+  type ThreadChannel,
 } from "discord.js";
 import { config } from "../config.ts";
 import { createLogger } from "../logger.ts";
@@ -13,11 +14,16 @@ export type MessageHandler = (message: Message) => void | Promise<void>;
 export type InteractionHandler = (
   interaction: Interaction,
 ) => void | Promise<void>;
+export type ThreadCreateHandler = (
+  thread: ThreadChannel,
+  newlyCreated: boolean,
+) => void | Promise<void>;
 
 export interface DiscordClient {
   client: Client;
   onMessage(handler: MessageHandler): void;
   onInteraction(handler: InteractionHandler): void;
+  onThreadCreate(handler: ThreadCreateHandler): void;
   login(): Promise<void>;
   destroy(): Promise<void>;
 }
@@ -33,6 +39,7 @@ export function createDiscordClient(): DiscordClient {
 
   const messageHandlers: MessageHandler[] = [];
   const interactionHandlers: InteractionHandler[] = [];
+  const threadCreateHandlers: ThreadCreateHandler[] = [];
 
   client.once("ready", () => {
     logger.info(`Bot logged in as ${client.user?.tag ?? "unknown"}`);
@@ -54,6 +61,14 @@ export function createDiscordClient(): DiscordClient {
     }
   });
 
+  client.on("threadCreate", (thread, newlyCreated) => {
+    for (const handler of threadCreateHandlers) {
+      void Promise.resolve(handler(thread, newlyCreated)).catch((err: unknown) => {
+        logger.error(`threadCreate handler error: ${String(err)}`);
+      });
+    }
+  });
+
   return {
     client,
     onMessage(handler: MessageHandler) {
@@ -61,6 +76,9 @@ export function createDiscordClient(): DiscordClient {
     },
     onInteraction(handler: InteractionHandler) {
       interactionHandlers.push(handler);
+    },
+    onThreadCreate(handler: ThreadCreateHandler) {
+      threadCreateHandlers.push(handler);
     },
     async login() {
       await client.login(config.discordBotToken);

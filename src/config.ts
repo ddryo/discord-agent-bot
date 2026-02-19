@@ -8,7 +8,7 @@ interface Config {
   pollIntervalMs: number;
 }
 
-function expandTilde(path: string): string {
+export function expandTilde(path: string): string {
   if (path.startsWith("~/")) {
     return path.replace("~", homedir());
   }
