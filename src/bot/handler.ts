@@ -1,6 +1,6 @@
 import { stat } from "fs/promises";
 import { resolve } from "path";
-import type { Message, ThreadChannel } from "discord.js";
+import type { Message, TextChannel, ThreadChannel } from "discord.js";
 import { EmbedBuilder } from "discord.js";
 import { config, expandTilde } from "../config.ts";
 import { createLogger } from "../logger.ts";
@@ -8,6 +8,7 @@ import { createSession, hasSession, killSession, sendInput } from "../tmux/manag
 import { sessionStore } from "../sessions/store.ts";
 import type { OutputWatcher } from "../tmux/watcher.ts";
 import { getPendingInteraction, clearPendingInteraction, handleAskUserTextResponse } from "./interactions.ts";
+import { sendSessionStartNotification, sendSessionEndNotification } from "./responder.ts";
 
 const logger = createLogger("bot:handler");
 
@@ -27,12 +28,27 @@ export function setWatcher(w: OutputWatcher): void {
   watcher = w;
 }
 
+/**
+ * ユーザーが操作を許可されているか確認する。
+ * DISCORD_USER_ID 未設定時は全員許可。
+ */
+export function isAuthorizedUser(userId: string): boolean {
+  if (!config.discordUserId) return true;
+  return userId === config.discordUserId;
+}
+
 /** パストラバーサル防止: システムディレクトリへのセッション作成をブロック */
 const BLOCKED_PATHS = ["/", "/etc", "/sys", "/proc", "/dev", "/boot", "/sbin", "/bin", "/usr/sbin", "/usr/bin"];
 
 export async function handleMessage(message: Message): Promise<void> {
   // Bot 自身のメッセージは無視
   if (message.author.bot) return;
+
+  // 操作ユーザー制限チェック
+  if (!isAuthorizedUser(message.author.id)) {
+    logger.debug(`Unauthorized user: ${message.author.tag} (${message.author.id})`);
+    return;
+  }
 
   // スレッド内メッセージの振り分け
   if (message.channel.isThread()) {
@@ -48,7 +64,7 @@ export async function handleMessage(message: Message): Promise<void> {
 
   logger.info(`Message from ${message.author.tag}: ${text.substring(0, 80)}`);
 
-  // メインセッションが存在しなければ再作成・再登録
+  // メインセッションが存在しなければ再作成・再登録・監視再開
   const sessionExists = await hasSession(MAIN_SESSION_NAME);
   if (!sessionExists) {
     logger.info("Main session not found, creating...");
@@ -59,6 +75,8 @@ export async function handleMessage(message: Message): Promise<void> {
       threadId: null,
       isMain: true,
     });
+    // session_end / session_dead で unwatch された後の復旧
+    watcher?.watch(MAIN_SESSION_NAME);
   }
 
   // コマンド判定
@@ -90,6 +108,9 @@ async function handleThreadMessage(message: Message): Promise<void> {
 
   // 対象チャンネルの子スレッドかどうかを確認
   if (thread.parentId !== config.discordChannelId) return;
+
+  // 操作ユーザー制限チェック
+  if (!isAuthorizedUser(message.author.id)) return;
 
   const text = message.content.trim();
   if (!text) return;
@@ -211,13 +232,8 @@ async function handleExitCommand(
     watcher.unwatch(sessionName);
   }
 
-  // 終了メッセージを Discord に投稿
-  const embed = new EmbedBuilder()
-    .setDescription("セッションを終了しました。")
-    .setColor(0xed4245)
-    .setTimestamp();
-
-  await message.reply({ embeds: [embed] });
+  // 終了通知を Discord に投稿
+  await sendSessionEndNotification(message.channel as TextChannel | ThreadChannel, "exit");
 }
 
 /**
@@ -234,6 +250,9 @@ export async function handleThreadCreate(
 
   // 対象チャンネルの子スレッドかどうかを確認
   if (thread.parentId !== config.discordChannelId) return;
+
+  // 操作ユーザー制限チェック（スレッド作成者）
+  if (!isAuthorizedUser(thread.ownerId ?? "")) return;
 
   const threadId = thread.id;
 
@@ -318,10 +337,8 @@ export async function handleThreadCreate(
   // OutputWatcher で監視開始
   watcher.watch(sessionName);
 
-  // 起動完了メッセージ
-  await thread.send(
-    `セッションを起動しました。\n作業ディレクトリ: \`${resolvedPath}\``,
-  );
+  // 起動完了通知
+  await sendSessionStartNotification(thread, sessionName, resolvedPath);
 
   logger.info(`Thread session started: ${sessionName} (cwd: ${resolvedPath})`);
 }

@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import { capturePane } from "./manager.ts";
+import { capturePane, hasSession } from "./manager.ts";
 import { parseOutput } from "./parser.ts";
 import { config } from "../config.ts";
 import { createLogger } from "../logger.ts";
@@ -14,6 +14,7 @@ interface WatcherEntry {
 
 export interface OutputWatcherEvents {
   output: [sessionName: string, events: OutputEvent[]];
+  session_dead: [sessionName: string];
 }
 
 /**
@@ -111,6 +112,13 @@ export class OutputWatcher extends EventEmitter<OutputWatcherEvents> {
       }
     } catch (error) {
       logger.error(`Poll error for session ${sessionName}: ${error}`);
+      // セッション死亡チェック
+      const alive = await hasSession(sessionName);
+      if (!alive) {
+        logger.warn(`Session dead detected: ${sessionName}`);
+        this.emit("session_dead", sessionName);
+        this.unwatch(sessionName);
+      }
     }
   }
 

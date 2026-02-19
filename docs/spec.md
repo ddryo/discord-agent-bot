@@ -104,11 +104,16 @@ Discord チャンネル (DISCORD_CHANNEL_ID)
 [Discord メッセージ受信]
   |
   v
+[操作ユーザー制限チェック（DISCORD_USER_ID 設定時）]
+  |
+  +-- 未許可ユーザー --> 無視（ボタン応答はエフェメラルで権限なしメッセージ）
+  |
+  v
 [コマンド判定（/ で始まるか）]
   |
   +-- コマンド --+
   |              |
-  |   +-- /exit --> killSession → removeSession → watcher.unwatch → 終了 Embed
+  |   +-- /exit --> killSession → removeSession → watcher.unwatch → 終了通知 Embed
   |   +-- /clear, /compact 等 --> send-keys で CLI に送信（/clear は区切り Embed を追加投稿）
   |   +-- 未対応コマンド --> エラーメッセージ返信
   |
@@ -120,12 +125,12 @@ Discord チャンネル (DISCORD_CHANNEL_ID)
   v
 [出力監視で差分検出]
   |
-  +-- 通常テキスト --> Discord に投稿
+  +-- 通常テキスト --> Discord に投稿（rate limit 対策付き）
   +-- ツール許可待ち --> ボタン付き Embed --> ユーザー応答 --> send-keys
   +-- AskUserQuestion --> 質問 + ボタン/テキスト --> ユーザー応答 --> send-keys
   +-- アイドル --> 待機
-  +-- セッション終了 --> 通知
-  +-- エラー --> エラー通知
+  +-- セッション終了 --> 終了通知 Embed + クリーンアップ
+  +-- セッション死亡 --> エラー通知 Embed + クリーンアップ（capturePane 失敗 → hasSession で検知）
 ```
 
 ### パーサーのイベント層（FR-004）
@@ -142,6 +147,14 @@ raw テキストからドメインイベントへの変換を分離し、Claude 
 | `error` | エラー検出 |
 
 **検出優先順位**: `tool_approval` > `ask_user` > `session_end` > `idle` > `text`
+
+**OutputWatcher レベルのイベント**:
+
+上記のパーサーイベントとは別に、OutputWatcher が直接発火するイベントがある。
+
+| イベント | 説明 |
+|----------|------|
+| `session_dead` | capturePane 失敗時に hasSession() でセッション死亡を検知した場合に発火。パーサーを経由しない |
 
 **検出パターン詳細**:
 
@@ -178,7 +191,7 @@ tmux コマンドの実行には `Bun.spawn` の引数配列形式を使用し�
 | セッション破棄 | `tmux kill-session -t {name}` | セッションを終了 |
 | テキスト入力 | `tmux send-keys -t {name} -l -- {text}` + `send-keys Enter` | Claude CLI にテキストを送信 |
 | 特殊キー送信 | `tmux send-keys -t {name} {keys}` | Escape, Up 等の特殊キー |
-| 画面キャプチャ | `tmux capture-pane -p -t {name} -S -{lines}` | 出力テキストを取得（デフォルト 200 行） |
+| 画面キャプチャ | `tmux capture-pane -p -t {name} -S -{lines}` | 出力テキストを取得（デフォルト 500 行） |
 | セッション確認 | `tmux has-session -t {name}` | セッションの存在確認 |
 | セッション一覧 | `tmux list-sessions -F "#{session_name}"` | ccbot- プレフィックスでフィルタ |
 
@@ -221,8 +234,46 @@ tmux コマンドの実行には `Bun.spawn` の引数配列形式を使用し�
 |----------|------|
 | `/clear` | CLI に送信 + 区切り Embed（`--- Context Cleared ---`）を返信 |
 | `/compact`, `/cost`, `/context`, `/status`, `/model` | CLI にそのまま送信 |
-| `/exit` | `killSession` → `removeSession` → `watcher.unwatch` → 終了 Embed を返信 |
+| `/exit` | `killSession` → `removeSession` → `watcher.unwatch` → `clearPendingInteraction` → 終了通知 Embed を返信 |
 | その他 | `未対応のコマンドです` エラーメッセージを返信 |
+
+**セッション起動/終了通知（FR-013）**
+
+`responder.ts` の共通関数で Embed を投稿する。メイン・スレッドセッション両対応。
+
+| 通知種別 | 関数 | Embed 色 | 説明 |
+|----------|------|----------|------|
+| 起動 | `sendSessionStartNotification()` | 緑 (`0x57f287`) | セッション名と作業ディレクトリを表示 |
+| 正常終了 | `sendSessionEndNotification(channel, "normal")` | 青 (`0x5865f2`) | `session_end` イベント検知時 |
+| 異常終了 | `sendSessionEndNotification(channel, "error")` | 赤 (`0xed4245`) | `session_dead` イベント検知時 |
+| 手動終了 | `sendSessionEndNotification(channel, "exit")` | 黄 (`0xfee75c`) | `/exit` コマンド実行時 |
+
+**Discord 投稿の rate limit 対策（FR-018）**
+
+`sendToDiscord()` で以下の対策を実施する。
+
+| 対策 | 説明 |
+|------|------|
+| 429 リトライ | Discord API の 429 レスポンス時に `retryAfter` 値を待ってからリトライ（1 回まで） |
+| 連続投稿遅延 | 分割投稿時、チャンク間に 500ms の遅延を挿入して rate limit を予防 |
+
+**操作ユーザー制限（FR-017）**
+
+`DISCORD_USER_ID` が設定されている場合、以下のチェックを行う。
+
+| チェック対象 | 挙動 |
+|-------------|------|
+| メッセージ（handler.ts） | 未許可ユーザーのメッセージは無視（応答しない） |
+| ボタン応答（interactions.ts） | エフェメラルメッセージで「権限がありません」を表示 |
+
+**エラーハンドリング・安定化（FR-014, FR-015, FR-016）**
+
+| 機能 | 説明 |
+|------|------|
+| セッション死亡検知 | OutputWatcher の poll() で capturePane 失敗時に `hasSession()` でセッション生存を確認し、死亡時に `session_dead` イベントを発火 |
+| グレースフルシャットダウン | SIGINT/SIGTERM 受信時に `watcher.unwatchAll()` → 全 `ccbot-` セッション kill → `discord.destroy()` を順次実行。`isShuttingDown` フラグで二重実行を防止 |
+| 起動時ヘルスチェック | `checkDependencies()` で `tmux -V` / `claude --version` を確認。未インストール時はエラーメッセージをスローして起動中断 |
+| クラッシュ防止 | `process.on('unhandledRejection'/'uncaughtException')` でプロセスクラッシュを防止し、エラーログを出力 |
 
 ### 環境変数
 
@@ -243,8 +294,10 @@ tmux コマンドの実行には `Bun.spawn` の引数配列形式を使用し�
 |----|----------|------|
 | NFR-001 | 応答性 | 出力監視の遅延は POLL_INTERVAL_MS（デフォルト 1500ms）以内 |
 | NFR-002 | 並列性 | 複数スレッドのセッションが互いに干渉しない |
-| NFR-003 | 前提環境 | tmux がインストール済み、Claude CLI (claude) が PATH に存在 |
-| NFR-004 | Discord 制約 | メッセージは 2000 文字以内に分割して投稿 |
+| NFR-003 | 前提環境 | tmux がインストール済み、Claude CLI (claude) が PATH に存在（起動時に自動チェック） |
+| NFR-004 | Discord 制約 | メッセージは 2000 文字以内に分割して投稿（rate limit 対策付き） |
+| NFR-005 | 耐障害性 | セッション死亡検知・通知、unhandledRejection/uncaughtException のキャッチ |
+| NFR-006 | 終了処理 | SIGINT/SIGTERM 受信時に全 tmux セッションをクリーンアップして終了 |
 
 ### コーディング規約
 
@@ -252,13 +305,12 @@ tmux コマンドの実行には `Bun.spawn` の引数配列形式を使用し�
 - ESM (ES Modules) 形式
 - Bun ランタイムの API を優先使用
 
-### スコープ外（MVP で割り切る点）
+### スコープ外
 
 - Bot 再起動時のセッション再接続（kill して再作成で対応）
-- Discord rate limit キュー（問題が出てから対応）
 - セッションライフサイクル管理（タイムアウト・自動終了等は後回し）
 - Web UI やダッシュボード
-- 認証・認可の高度な仕組み（DISCORD_USER_ID による単純制限のみ）
+- 認証・認可の高度な仕組み（DISCORD_USER_ID による単純制限は M4 で実装済み）
 
 ### 実装前に必要な実機検証
 
@@ -283,4 +335,4 @@ tmux コマンドの実行には `Bun.spawn` の引数配列形式を使用し�
 | /clear 後の capture-pane 出力 | /clear 実行後に capture-pane |
 | 応答生成中の capture-pane | 生成途中の出力がどう見えるか |
 | セッション終了時の出力 | /exit や異常終了時 |
-| capture-pane のバッファ上限 | 長い応答で -S -200 が十分か |
+| capture-pane のバッファ上限 | 長い応答で -S -500 が十分か |

@@ -93,15 +93,25 @@
 
 | タスクID | 状態 | 依存タスク | 対応要件 | 概要 |
 |----|------|------|--------|--------|
-| T-M4-1 | ⬜ | T-M2-3 | FR-014 | エラーハンドリング（セッション死亡検知・通知） |
-| T-M4-2 | ⬜ | T-M4-1 | FR-015 | グレースフルシャットダウン（SIGINT/SIGTERM） |
-| T-M4-3 | ⬜ | T-M1-5 | FR-016 | 起動時ヘルスチェック（tmux・Claude CLI 存在確認） |
-| T-M4-4 | ⬜ | T-M1-10 | FR-018 | 長時間出力・大量出力への対策 |
-| T-M4-5 | ⬜ | T-M1-9 | FR-017 | 操作ユーザー制限の実装 |
-| T-M4-6 | ⬜ | T-M1-6 | FR-013 | セッション起動/終了通知 |
+| T-M4-1 | ✅ | T-M2-3 | FR-014 | エラーハンドリング（セッション死亡検知・通知） |
+| T-M4-2 | ✅ | T-M4-1 | FR-015 | グレースフルシャットダウン（SIGINT/SIGTERM） |
+| T-M4-3 | ✅ | T-M1-5 | FR-016 | 起動時ヘルスチェック（tmux・Claude CLI 存在確認） |
+| T-M4-4 | ✅ | T-M1-10 | FR-018 | 長時間出力・大量出力への対策 |
+| T-M4-5 | ✅ | T-M1-9 | FR-017 | 操作ユーザー制限の実装 |
+| T-M4-6 | ✅ | T-M1-6 | FR-013 | セッション起動/終了通知 |
 
 ### マイルストーン達成条件
-- [ ] セッションが異常終了した場合に Discord に通知される
-- [ ] Bot 終了時に全 tmux セッションがクリーンアップされる
-- [ ] tmux / Claude CLI 未インストール時に分かりやすいエラーメッセージが出る
-- [ ] 2000 文字超の応答が正しく分割投稿される
+- [x] セッションが異常終了した場合に Discord に通知される
+- [x] Bot 終了時に全 tmux セッションがクリーンアップされる
+- [x] tmux / Claude CLI 未インストール時に分かりやすいエラーメッセージが出る
+- [x] 2000 文字超の応答が正しく分割投稿される
+- [x] DISCORD_USER_ID による操作ユーザー制限が機能する
+- [x] セッション起動/終了時にステータス通知が投稿される
+
+### 実装メモ
+- **T-M4-1（エラーハンドリング）**: OutputWatcher の `poll()` で `capturePane` 失敗時に `hasSession()` でセッション死亡を検知し、`session_dead` イベントを発火。index.ts で `session_dead` / `session_end` イベントをハンドリングし、Discord 通知 + クリーンアップ（SessionStore 削除、watcher.unwatch、pendingInteraction クリア）を実施。`process.on('unhandledRejection'/'uncaughtException')` でプロセスクラッシュを防止
+- **T-M4-2（グレースフルシャットダウン）**: `gracefulShutdown()` で `watcher.unwatchAll()` → `listSessions()` で全 `ccbot-` セッションを kill → `discord.destroy()` を順次実行。`isShuttingDown` フラグで二重実行を防止。SIGINT / SIGTERM の両方に対応
+- **T-M4-3（起動時ヘルスチェック）**: `checkDependencies()` で `tmux -V`、`claude --version` を `Bun.spawn` で実行し、未インストール時は日本語エラーメッセージをスローして起動中断。正常時はバージョン情報をログ出力
+- **T-M4-4（長時間出力・大量出力への対策）**: `capturePane` のデフォルトスクロールバック行数を 200 → 500 に拡大。`sendToDiscord()` に rate limit 対策を追加（429 レスポンス時のリトライ、連続投稿チャンク間の 500ms 遅延）
+- **T-M4-5（操作ユーザー制限）**: `handler.ts` / `interactions.ts` に `isAuthorizedUser()` チェックを追加。未許可ユーザーのメッセージは無視、ボタン応答はエフェメラルメッセージで「権限がありません」と応答
+- **T-M4-6（セッション起動/終了通知）**: `responder.ts` に `sendSessionStartNotification()` / `sendSessionEndNotification()` 共通関数を実装。正常終了（青）、異常終了（赤）、手動終了（黄）、起動（緑）で色分け通知
