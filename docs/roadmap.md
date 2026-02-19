@@ -36,7 +36,7 @@
 - 出力監視は capture-pane ポーリング方式を採用（pipe-pane 方式は不採用）
 - OutputWatcher は EventEmitter ベースで `"output"` イベントを発火し、イベント種別は `OutputEvent.type` で判定
 - メッセージ分割はコードブロック（```）の途中切断を回避するロジックを実装済み
-- `.env.example` は未作成（`.gitignore` で `.env` を除外済み）
+- `.env.example` は作成済み（DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID, DISCORD_USER_ID, DEFAULT_CWD, POLL_INTERVAL_MS を記載）
 
 
 ## M2: マルチセッション（スレッド対応）

@@ -4,6 +4,7 @@ import { createLogger } from "../logger.ts";
 const logger = createLogger("bot:responder");
 
 const DISCORD_MAX_LENGTH = 2000;
+const CODE_FENCE_RESERVE = 5; // "\n```" の分を予約
 
 /**
  * Discord チャンネルまたはスレッドにテキストを投稿する。
@@ -46,7 +47,13 @@ export function splitMessage(content: string): string[] {
       break;
     }
 
-    let splitIndex = findSplitIndex(remaining);
+    // コードブロック補正分を見込んで上限を縮小
+    const openFences = countCodeFences(remaining.slice(0, DISCORD_MAX_LENGTH));
+    const effectiveMax = openFences % 2 !== 0
+      ? DISCORD_MAX_LENGTH - CODE_FENCE_RESERVE
+      : DISCORD_MAX_LENGTH;
+
+    let splitIndex = findSplitIndex(remaining, effectiveMax);
     let chunk = remaining.slice(0, splitIndex);
     remaining = remaining.slice(splitIndex);
 
@@ -65,9 +72,7 @@ export function splitMessage(content: string): string[] {
  * 分割位置を決定する。
  * 改行位置で分割し、コードブロック途中の分割を可能な限り回避する。
  */
-function findSplitIndex(text: string): number {
-  const maxLen = DISCORD_MAX_LENGTH;
-
+function findSplitIndex(text: string, maxLen: number = DISCORD_MAX_LENGTH): number {
   // 改行位置で分割を試みる（後方から探す）
   const searchRange = text.slice(0, maxLen);
   const lastNewline = searchRange.lastIndexOf("\n");

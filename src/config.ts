@@ -36,7 +36,10 @@ function loadConfig(): Config {
   const defaultCwd = expandTilde(
     process.env["DEFAULT_CWD"] || "~/Desktop"
   );
-  const pollIntervalMs = Number(process.env["POLL_INTERVAL_MS"] || "1500");
+  const rawPollInterval = Number(process.env["POLL_INTERVAL_MS"] || "1500");
+  const pollIntervalMs = Number.isFinite(rawPollInterval) && rawPollInterval > 0
+    ? rawPollInterval
+    : 1500;
 
   return {
     discordBotToken,

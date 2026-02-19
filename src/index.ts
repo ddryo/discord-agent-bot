@@ -5,7 +5,7 @@ import { sessionStore } from "./sessions/store.ts";
 import { createDiscordClient } from "./bot/client.ts";
 import { handleMessage } from "./bot/handler.ts";
 import { sendToDiscord } from "./bot/responder.ts";
-import { createSession } from "./tmux/manager.ts";
+import { createSession, hasSession, killSession } from "./tmux/manager.ts";
 import { OutputWatcher } from "./tmux/watcher.ts";
 import type { OutputEvent } from "./types.ts";
 
@@ -19,7 +19,12 @@ async function main(): Promise<void> {
   // 1. Discord クライアント初期化
   const discord = createDiscordClient();
 
-  // 2. メインセッション作成
+  // 2. メインセッション作成（既存セッションがあれば再作成）
+  const sessionExists = await hasSession(MAIN_SESSION_NAME);
+  if (sessionExists) {
+    logger.warn("Existing main session found, killing and recreating...");
+    await killSession(MAIN_SESSION_NAME);
+  }
   logger.info(`Creating main session (cwd: ${config.defaultCwd})`);
   await createSession(MAIN_SESSION_NAME, config.defaultCwd);
 

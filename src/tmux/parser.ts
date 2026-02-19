@@ -34,19 +34,16 @@ function detectIdlePrompt(cleanText: string): boolean {
 
 /**
  * セッション終了パターンを検出する
+ *
+ * Claude CLI 固有の終了メッセージのみ検出する（誤検知を防ぐため汎用パターンは使わない）
  */
 function detectSessionEnd(cleanText: string): boolean {
   const lines = cleanText.trimEnd().split("\n");
   // 末尾数行を対象に検出
   const tail = lines.slice(-5).join("\n");
 
-  // セッション終了の典型的なパターン
+  // セッション終了の典型的なパターン（Claude CLI 固有のメッセージ）
   if (/session\s+ended|goodbye|exiting/i.test(tail)) {
-    return true;
-  }
-
-  // シェルプロンプトに戻った場合（claude CLI が終了した兆候）
-  if (/\$\s*$/.test(lines[lines.length - 1]?.trim() ?? "")) {
     return true;
   }
 
@@ -70,21 +67,43 @@ export function parseOutput(rawText: string): OutputEvent[] {
     return events;
   }
 
-  // 状態検出（優先度順）
-  let type: OutputEventType = "text";
+  // 本文テキストと状態を分離して複数イベントを返す
+  const isSessionEnd = detectSessionEnd(cleanText);
+  const isIdle = detectIdlePrompt(cleanText);
 
-  if (detectSessionEnd(cleanText)) {
-    type = "session_end";
-  } else if (detectIdlePrompt(cleanText)) {
-    type = "idle";
+  // 本文抽出: 状態行（プロンプト行等）を除いたテキスト部分
+  if (isIdle || isSessionEnd) {
+    const lines = cleanText.trimEnd().split("\n");
+    // 末尾のプロンプト/状態行を除いた本文
+    const bodyLines: string[] = [];
+    for (let i = 0; i < lines.length - 1; i++) {
+      bodyLines.push(lines[i]!);
+    }
+    const bodyText = bodyLines.join("\n").trim();
+
+    if (bodyText) {
+      events.push({
+        type: "text",
+        content: bodyText,
+        raw: rawText,
+        timestamp: now,
+      });
+    }
+
+    events.push({
+      type: isSessionEnd ? "session_end" : "idle",
+      content: lines[lines.length - 1] ?? "",
+      raw: rawText,
+      timestamp: now,
+    });
+  } else {
+    events.push({
+      type: "text",
+      content: cleanText,
+      raw: rawText,
+      timestamp: now,
+    });
   }
-
-  events.push({
-    type,
-    content: cleanText,
-    raw: rawText,
-    timestamp: now,
-  });
 
   return events;
 }
