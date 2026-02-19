@@ -64,7 +64,7 @@ export async function handleMessage(message: Message): Promise<void> {
 
   logger.info(`Message from ${message.author.tag}: ${text.substring(0, 80)}`);
 
-  // メインセッションが存在しなければ再作成・再登録
+  // メインセッションが存在しなければ再作成・再登録・監視再開
   const sessionExists = await hasSession(MAIN_SESSION_NAME);
   if (!sessionExists) {
     logger.info("Main session not found, creating...");
@@ -75,6 +75,8 @@ export async function handleMessage(message: Message): Promise<void> {
       threadId: null,
       isMain: true,
     });
+    // session_end / session_dead で unwatch された後の復旧
+    watcher?.watch(MAIN_SESSION_NAME);
   }
 
   // コマンド判定
@@ -248,6 +250,9 @@ export async function handleThreadCreate(
 
   // 対象チャンネルの子スレッドかどうかを確認
   if (thread.parentId !== config.discordChannelId) return;
+
+  // 操作ユーザー制限チェック（スレッド作成者）
+  if (!isAuthorizedUser(thread.ownerId ?? "")) return;
 
   const threadId = thread.id;
 

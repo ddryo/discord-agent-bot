@@ -18,12 +18,45 @@ const MAIN_SESSION_NAME = "main";
 async function main(): Promise<void> {
   logger.info("Starting discord-agent-bot...");
 
-  // 0. 起動時ヘルスチェック
+  // 0. シグナルハンドラを早期登録（初期化途中でもクリーンアップ可能にする）
+  let isShuttingDown = false;
+  let watcher: OutputWatcher | undefined;
+  let discord: ReturnType<typeof createDiscordClient> | undefined;
+
+  async function gracefulShutdown(signal: string): Promise<void> {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
+    logger.info(`Received ${signal}, shutting down...`);
+
+    // 1. OutputWatcher の全監視を停止
+    watcher?.unwatchAll();
+
+    // 2. 全 tmux セッション（ccbot- プレフィックス）を killSession
+    const sessions = await listSessions();
+    for (const fullName of sessions) {
+      const name = fullName.replace(/^ccbot-/, "");
+      await killSession(name);
+    }
+
+    // 3. Discord クライアントの切断
+    if (discord) {
+      await discord.destroy();
+    }
+
+    logger.info("Shutdown complete");
+    process.exit(0);
+  }
+
+  process.on("SIGINT", () => void gracefulShutdown("SIGINT"));
+  process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));
+
+  // 0.5. 起動時ヘルスチェック
   const versions = await checkDependencies();
   logger.info(`Dependencies: tmux=${versions.tmux}, claude=${versions.claude}`);
 
   // 1. Discord クライアント初期化
-  const discord = createDiscordClient();
+  discord = createDiscordClient();
 
   // 2. メインセッション作成（既存セッションがあれば再作成）
   const sessionExists = await hasSession(MAIN_SESSION_NAME);
@@ -44,7 +77,7 @@ async function main(): Promise<void> {
   });
 
   // 4. OutputWatcher を作成（ログイン後に監視開始）
-  const watcher = new OutputWatcher();
+  watcher = new OutputWatcher();
 
   // handler.ts から watcher を利用できるよう設定
   setWatcher(watcher);
@@ -162,35 +195,6 @@ async function main(): Promise<void> {
   if (mainChannel) {
     await sendSessionStartNotification(mainChannel, MAIN_SESSION_NAME, config.defaultCwd);
   }
-
-  // 10. グレースフルシャットダウン
-  let isShuttingDown = false;
-
-  async function gracefulShutdown(signal: string): Promise<void> {
-    if (isShuttingDown) return;
-    isShuttingDown = true;
-
-    logger.info(`Received ${signal}, shutting down...`);
-
-    // 1. OutputWatcher の全監視を停止
-    watcher.unwatchAll();
-
-    // 2. 全 tmux セッション（ccbot- プレフィックス）を killSession
-    const sessions = await listSessions();
-    for (const fullName of sessions) {
-      const name = fullName.replace(/^ccbot-/, "");
-      await killSession(name);
-    }
-
-    // 3. Discord クライアントの切断
-    await discord.destroy();
-
-    logger.info("Shutdown complete");
-    process.exit(0);
-  }
-
-  process.on("SIGINT", () => void gracefulShutdown("SIGINT"));
-  process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));
 
   logger.info("Bot is ready");
 }

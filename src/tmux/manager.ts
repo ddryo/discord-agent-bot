@@ -97,19 +97,33 @@ export async function checkDependencies(): Promise<{ tmux: string; claude: strin
   let tmuxVersion: string;
   try {
     const proc = Bun.spawn(["tmux", "-V"], { stdout: "pipe", stderr: "pipe" });
-    tmuxVersion = (await new Response(proc.stdout).text()).trim();
-    await proc.exited;
-  } catch {
-    throw new Error("tmux が見つかりません。tmux をインストールしてください。");
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      throw new Error(`tmux -V failed (exit ${exitCode}): ${stderr.trim()}`);
+    }
+    tmuxVersion = stdout.trim();
+  } catch (error) {
+    throw new Error(`tmux が見つからないか正常に動作しません: ${String(error)}`);
   }
 
   let claudeVersion: string;
   try {
     const proc = Bun.spawn(["claude", "--version"], { stdout: "pipe", stderr: "pipe" });
-    claudeVersion = (await new Response(proc.stdout).text()).trim();
-    await proc.exited;
-  } catch {
-    throw new Error("Claude CLI (claude) が見つかりません。Claude CLI をインストールしてください。");
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      throw new Error(`claude --version failed (exit ${exitCode}): ${stderr.trim()}`);
+    }
+    claudeVersion = stdout.trim();
+  } catch (error) {
+    throw new Error(`Claude CLI (claude) が見つからないか正常に動作しません: ${String(error)}`);
   }
 
   return { tmux: tmuxVersion, claude: claudeVersion };
