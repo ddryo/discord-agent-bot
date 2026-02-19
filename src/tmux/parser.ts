@@ -35,16 +35,19 @@ function detectIdlePrompt(cleanText: string): boolean {
 /**
  * セッション終了パターンを検出する
  *
- * Claude CLI 固有の終了メッセージのみ検出する（誤検知を防ぐため汎用パターンは使わない）
+ * Claude CLI 固有の終了メッセージのみを行全体一致で検出する（誤検知を防ぐため部分一致は使わない）
  */
 function detectSessionEnd(cleanText: string): boolean {
   const lines = cleanText.trimEnd().split("\n");
   // 末尾数行を対象に検出
-  const tail = lines.slice(-5).join("\n");
+  const tailLines = lines.slice(-5);
 
-  // セッション終了の典型的なパターン（Claude CLI 固有のメッセージ）
-  if (/session\s+ended|goodbye|exiting/i.test(tail)) {
-    return true;
+  for (const line of tailLines) {
+    const trimmed = line.trim();
+    // Claude CLI が終了時に表示する定型メッセージ（行全体一致）
+    if (/^(Goodbye!|Session ended\.|Exiting\.\.\.)$/i.test(trimmed)) {
+      return true;
+    }
   }
 
   return false;
