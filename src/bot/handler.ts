@@ -92,6 +92,9 @@ export async function handleMessage(message: Message): Promise<void> {
     return;
   }
 
+  // リアクション
+  message.react("👀").catch(() => {});
+
   // SessionManager 経由でメッセージ送信
   try {
     await sessionManager.sendMessage(MAIN_SESSION_NAME, text);
@@ -150,6 +153,9 @@ async function handleThreadMessage(message: Message): Promise<void> {
     await message.reply("処理中です。完了までお待ちください。");
     return;
   }
+
+  // リアクション
+  message.react("👀").catch(() => {});
 
   // SessionManager 経由でメッセージ送信
   try {
