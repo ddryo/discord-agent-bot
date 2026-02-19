@@ -14,14 +14,22 @@ import { createLogger } from "../logger.ts";
 
 const logger = createLogger("bot:interactions");
 
+/** Discord コンポーネント制限: 最大 5 ActionRow × 5 ボタン */
+const MAX_BUTTONS = 25;
+
+interface PendingState {
+  type: "tool_approval" | "ask_user";
+  messageId: string;
+}
+
 /** セッションごとの待機中インタラクション状態 */
-const pendingInteractions = new Map<string, "tool_approval" | "ask_user">();
+const pendingInteractions = new Map<string, PendingState>();
 
 /**
- * セッションの待機中インタラクション状態を取得する
+ * セッションの待機中インタラクション種別を取得する
  */
 export function getPendingInteraction(sessionName: string): "tool_approval" | "ask_user" | undefined {
-  return pendingInteractions.get(sessionName);
+  return pendingInteractions.get(sessionName)?.type;
 }
 
 /**
@@ -69,9 +77,8 @@ export async function sendToolApproval(
       .setStyle(ButtonStyle.Danger),
   );
 
-  pendingInteractions.set(sessionName, "tool_approval");
-
-  await channel.send({ embeds: [embed], components: [row] });
+  const sent = await channel.send({ embeds: [embed], components: [row] });
+  pendingInteractions.set(sessionName, { type: "tool_approval", messageId: sent.id });
 }
 
 /**
@@ -96,6 +103,8 @@ async function handleToolApprovalButton(
     logger.info(`Tool approval: ${action} (choice=${choice}) for session ${sessionName}`);
   } catch (error) {
     logger.error(`Failed to send tool approval: ${String(error)}`);
+    await interaction.reply({ content: "エラー: CLI への送信に失敗しました。再度お試しください。", flags: 64 });
+    return;
   }
 
   pendingInteractions.delete(sessionName);
@@ -143,8 +152,9 @@ export async function sendAskUser(
   const components: ActionRowBuilder<ButtonBuilder>[] = [];
 
   if (info.options && info.options.length > 0) {
-    // 選択肢をボタンで表示（最大5個/行、ActionRow は最大5行）
-    const buttons: ButtonBuilder[] = info.options.map((opt, i) =>
+    // Discord 制限: 最大 5 ActionRow × 5 ボタン = 25 個
+    const displayOptions = info.options.slice(0, MAX_BUTTONS);
+    const buttons: ButtonBuilder[] = displayOptions.map((opt, i) =>
       new ButtonBuilder()
         .setCustomId(`askuser_${i + 1}:${sessionName}`)
         .setLabel(`${i + 1}. ${opt}`.slice(0, 80))
@@ -164,12 +174,11 @@ export async function sendAskUser(
     embed.setFooter({ text: "テキストメッセージで回答してください" });
   }
 
-  pendingInteractions.set(sessionName, "ask_user");
-
-  await channel.send({
+  const sent = await channel.send({
     embeds: [embed],
     ...(components.length > 0 ? { components } : {}),
   });
+  pendingInteractions.set(sessionName, { type: "ask_user", messageId: sent.id });
 }
 
 /**
@@ -185,6 +194,8 @@ async function handleAskUserButton(
     logger.info(`AskUser: option ${optionIndex} selected for session ${sessionName}`);
   } catch (error) {
     logger.error(`Failed to send AskUser response: ${String(error)}`);
+    await interaction.reply({ content: "エラー: CLI への送信に失敗しました。再度お試しください。", flags: 64 });
+    return;
   }
 
   pendingInteractions.delete(sessionName);
@@ -209,6 +220,8 @@ export async function handleAskUserTextResponse(
     logger.info(`AskUser text response for session ${sessionName}: ${text.substring(0, 80)}`);
   } catch (error) {
     logger.error(`Failed to send AskUser text response: ${String(error)}`);
+    // テキスト返答は再送可能なため pending を維持
+    throw error;
   }
 
   pendingInteractions.delete(sessionName);
@@ -217,24 +230,45 @@ export async function handleAskUserTextResponse(
 /**
  * interactionCreate イベントのハンドラ
  */
+/**
+ * pending 状態と messageId を検証し、stale なボタン操作を拒否する
+ */
+function validatePending(sessionName: string, messageId: string, expectedType: PendingState["type"]): boolean {
+  const pending = pendingInteractions.get(sessionName);
+  return pending !== undefined && pending.type === expectedType && pending.messageId === messageId;
+}
+
 export async function handleInteraction(interaction: Interaction): Promise<void> {
   if (!interaction.isButton()) return;
 
   const customId = interaction.customId;
+  const messageId = interaction.message.id;
 
   // ツール許可ボタンの処理
   if (customId.startsWith("tool_approve:")) {
     const sessionName = customId.slice("tool_approve:".length);
+    if (!validatePending(sessionName, messageId, "tool_approval")) {
+      await interaction.reply({ content: "この操作は既に処理済みです。", flags: 64 });
+      return;
+    }
     await handleToolApprovalButton(interaction, sessionName, "approve");
     return;
   }
   if (customId.startsWith("tool_always:")) {
     const sessionName = customId.slice("tool_always:".length);
+    if (!validatePending(sessionName, messageId, "tool_approval")) {
+      await interaction.reply({ content: "この操作は既に処理済みです。", flags: 64 });
+      return;
+    }
     await handleToolApprovalButton(interaction, sessionName, "always");
     return;
   }
   if (customId.startsWith("tool_deny:")) {
     const sessionName = customId.slice("tool_deny:".length);
+    if (!validatePending(sessionName, messageId, "tool_approval")) {
+      await interaction.reply({ content: "この操作は既に処理済みです。", flags: 64 });
+      return;
+    }
     await handleToolApprovalButton(interaction, sessionName, "deny");
     return;
   }
@@ -244,6 +278,10 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
   if (askUserMatch) {
     const optionIndex = parseInt(askUserMatch[1]!, 10);
     const sessionName = askUserMatch[2]!;
+    if (!validatePending(sessionName, messageId, "ask_user")) {
+      await interaction.reply({ content: "この操作は既に処理済みです。", flags: 64 });
+      return;
+    }
     await handleAskUserButton(interaction, sessionName, optionIndex);
     return;
   }
