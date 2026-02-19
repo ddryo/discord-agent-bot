@@ -18,6 +18,7 @@ export interface SessionManagerEvents {
   toolBlocked: [sessionName: string, toolName: string, toolInput: Record<string, unknown>, errorContent: string, bufferedText: string];
   askUser: [sessionName: string, question: string, options: string[]];
   error: [sessionName: string, message: string];
+  processing: [sessionName: string];
   idle: [sessionName: string];
 }
 
@@ -85,6 +86,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
     const name = entry.info.name;
     entry.info.state = "running";
     entry.textBuffer = "";
+    this.emit("processing", name);
     const isResuming = !!entry.info.claudeSessionId;
 
     const allowedTools = [

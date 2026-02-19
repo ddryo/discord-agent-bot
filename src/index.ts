@@ -110,6 +110,36 @@ async function main(): Promise<void> {
     ) as ThreadChannel | undefined;
   };
 
+  // Typing indicator 管理
+  const typingIntervals = new Map<string, ReturnType<typeof setInterval>>();
+
+  const startTyping = (sessionName: string) => {
+    stopTyping(sessionName);
+    const channel = resolveChannel(sessionName);
+    if (!channel) return;
+    channel.sendTyping().catch(() => {});
+    const interval = setInterval(() => {
+      channel.sendTyping().catch(() => {});
+    }, 8_000);
+    typingIntervals.set(sessionName, interval);
+  };
+
+  const stopTyping = (sessionName: string) => {
+    const interval = typingIntervals.get(sessionName);
+    if (interval) {
+      clearInterval(interval);
+      typingIntervals.delete(sessionName);
+    }
+  };
+
+  sessionMgr.on("processing", (sessionName) => {
+    startTyping(sessionName);
+  });
+
+  sessionMgr.on("idle", (sessionName) => {
+    stopTyping(sessionName);
+  });
+
   sessionMgr.on("response", (sessionName, text, usage) => {
     void (async () => {
       const channel = resolveChannel(sessionName);
