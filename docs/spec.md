@@ -104,17 +104,25 @@ Discord チャンネル (DISCORD_CHANNEL_ID)
 [Discord メッセージ受信]
   |
   v
-[セッション特定（なければ作成）]
+[コマンド判定（/ で始まるか）]
   |
-  v
-[tmux send-keys で Claude CLI に入力]
+  +-- コマンド --+
+  |              |
+  |   +-- /exit --> killSession → removeSession → watcher.unwatch → 終了 Embed
+  |   +-- /clear, /compact 等 --> send-keys で CLI に送信（/clear は区切り Embed を追加投稿）
+  |   +-- 未対応コマンド --> エラーメッセージ返信
+  |
+  +-- 通常メッセージ --+
+  |                    |
+  |   +-- AskUser 待ちの場合 --> handleAskUserTextResponse → send-keys でテキスト送信
+  |   +-- それ以外 --> セッション特定（なければ作成）→ tmux send-keys で Claude CLI に入力
   |
   v
 [出力監視で差分検出]
   |
   +-- 通常テキスト --> Discord に投稿
   +-- ツール許可待ち --> ボタン付き Embed --> ユーザー応答 --> send-keys
-  +-- AskUserQuestion --> 質問 + ボタン --> ユーザー応答 --> send-keys
+  +-- AskUserQuestion --> 質問 + ボタン/テキスト --> ユーザー応答 --> send-keys
   +-- アイドル --> 待機
   +-- セッション終了 --> 通知
   +-- エラー --> エラー通知
@@ -132,6 +140,19 @@ raw テキストからドメインイベントへの変換を分離し、Claude 
 | `idle` | 入力待ちプロンプト |
 | `session_end` | セッション終了 |
 | `error` | エラー検出 |
+
+**検出優先順位**: `tool_approval` > `ask_user` > `session_end` > `idle` > `text`
+
+**検出パターン詳細**:
+
+| 検出関数 | 検出条件 | 備考 |
+|----------|----------|------|
+| `detectToolApproval()` | `"Do you want to proceed?"` + `"Tool: XXX"` パターン | ツール名・説明文・選択肢を抽出 |
+| `detectAskUser()` | `"?"` で始まる質問行 + `"(Use arrow keys or type your choice)"` | 質問文・選択肢を抽出 |
+| `detectSessionEnd()` | 末尾5行に `"Goodbye!"` / `"Session ended."` / `"Exiting..."` | 行全体一致で誤検知防止 |
+| `detectIdlePrompt()` | 末尾行が `>` プロンプト（ボックスドロー文字付き含む） | 正規表現: `/^[╰└\-─]*\s*>\s*$/` |
+
+`tool_approval` / `ask_user` は単一イベントとして返し、`session_end` / `idle` はテキスト本文と状態イベントの2つに分離して返す。
 
 ### 出力監視方式
 
@@ -170,18 +191,38 @@ tmux コマンドの実行には `Bun.spawn` の引数配列形式を使用し�
 
 ### Discord インタラクション
 
+インタラクション状態は `pendingInteractions` Map（`bot/interactions.ts`）でセッションごとに管理する。値は `"tool_approval"` | `"ask_user"` のいずれか。ボタン応答またはテキスト返答後にクリアされる。
+
 **ツール許可待ち（FR-008）**
 
-| ボタン | アクション |
-|--------|-----------|
-| Approve | 選択肢 1 を send-keys で送信 |
-| Always Allow | 選択肢 2 を send-keys で送信 |
-| Deny | 選択肢 3 を send-keys で送信 |
+| ボタン | customId | 送信値 |
+|--------|----------|--------|
+| Approve | `tool_approve:{sessionName}` | `"1"` |
+| Always Allow | `tool_always:{sessionName}` | `"2"` |
+| Deny | `tool_deny:{sessionName}` | `"3"` |
+
+- Embed のタイトル: `Tool: {ツール名}`、説明にツールの引数をコードブロックで表示
+- 応答後はボタンを disabled に更新し、選択結果と操作ユーザーを表示
 
 **AskUserQuestion（FR-009）**
 
-- 選択肢がある場合: ボタンで選択
-- テキスト返答: Discord メッセージで入力 --> send-keys で送信
+| 応答方式 | customId / トリガー | 送信値 |
+|----------|---------------------|--------|
+| ボタン選択 | `askuser_{n}:{sessionName}` | `"{n}"` （選択肢番号） |
+| テキスト返答 | handler.ts で AskUser 待ち判定 | メッセージ内容をそのまま send-keys |
+
+- Embed のタイトル: `Question`、説明に質問文を表示
+- 選択肢がある場合はボタンを表示（最大5個/行、ActionRow は最大5行）
+- ボタン・テキストどちらでも応答可（フッターで案内）
+
+**CLI コマンド（FR-010, FR-011, FR-012）**
+
+| コマンド | 処理 |
+|----------|------|
+| `/clear` | CLI に送信 + 区切り Embed（`--- Context Cleared ---`）を返信 |
+| `/compact`, `/cost`, `/context`, `/status`, `/model` | CLI にそのまま送信 |
+| `/exit` | `killSession` → `removeSession` → `watcher.unwatch` → 終了 Embed を返信 |
+| その他 | `未対応のコマンドです` エラーメッセージを返信 |
 
 ### 環境変数
 

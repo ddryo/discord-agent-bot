@@ -73,10 +73,20 @@
 | T-M3-5 | ✅ | T-M1-9 | FR-012 | /exit コマンド対応（セッション手動終了） |
 
 ### マイルストーン達成条件
-- [ ] ツール許可待ちが Embed + ボタンで通知され、ボタン応答で CLI に送信される
-- [ ] AskUserQuestion が通知され、選択肢ボタンまたはテキストで応答できる
-- [ ] /clear 実行時に Discord に区切りメッセージが挿入される
-- [ ] /exit でセッションが終了する
+- [x] ツール許可待ちが Embed + ボタンで通知され、ボタン応答で CLI に送信される
+- [x] AskUserQuestion が通知され、選択肢ボタンまたはテキストで応答できる
+- [x] /clear 実行時に Discord に区切りメッセージが挿入される
+- [x] /exit でセッションが終了する
+
+### 実装メモ
+- パーサーの検出優先順位は `tool_approval` > `ask_user` > `session_end` > `idle` > `text`
+- `detectToolApproval()`: `"Do you want to proceed?"` + `"Tool: XXX"` パターンでツール名・説明・選択肢を抽出
+- `detectAskUser()`: `"?"` 行 + `"(Use arrow keys or type your choice)"` で質問・選択肢を抽出
+- `bot/interactions.ts` が Embed + ボタン送信・ボタン応答処理・テキスト返答処理を一括管理
+- `pendingInteractions` Map でセッションごとの待機状態（`"tool_approval"` / `"ask_user"`）を管理し、テキスト入力の AskUser 返答を判定に利用
+- `client.ts` に `InteractionHandler` 型と `onInteraction` を追加し、`interactionCreate` イベントを `index.ts` から登録
+- `handler.ts` の `handleCommand()` で `/` コマンドを分岐処理、`handleExitCommand()` で killSession → removeSession → watcher.unwatch → 終了 Embed を投稿
+- `setWatcher()` で index.ts から watcher 参照を handler に渡す設計
 
 
 ## M4: 安定化
