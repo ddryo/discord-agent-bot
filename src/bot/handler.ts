@@ -137,6 +137,8 @@ export async function handleThreadCreate(
     resolveReady = res;
     rejectReady = rej;
   });
+  // unhandled rejection 防止（handleThreadMessage 側で別途 catch する）
+  void readyPromise.catch(() => undefined);
 
   // SessionStore に先行登録（メッセージ到着時のレースコンディション防止）
   sessionStore.registerSession(threadId, {
