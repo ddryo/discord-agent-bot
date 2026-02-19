@@ -5,6 +5,7 @@ const logger = createLogger("bot:responder");
 
 const DISCORD_MAX_LENGTH = 2000;
 const CODE_FENCE_RESERVE = 5; // コードブロック閉じ補正の余裕分（"\n```\n" 等）
+const RATE_LIMIT_DELAY_MS = 500; // 連続投稿時の遅延
 
 /**
  * Discord チャンネルまたはスレッドにテキストを投稿する。
@@ -20,13 +21,47 @@ export async function sendToDiscord(
 
   const chunks = splitMessage(content);
 
-  for (const chunk of chunks) {
+  for (let i = 0; i < chunks.length; i++) {
     try {
-      await channel.send(chunk);
+      await channel.send(chunks[i]!);
     } catch (error) {
-      logger.error(`Failed to send message: ${String(error)}`);
+      if (isRateLimitError(error)) {
+        const retryAfter = extractRetryAfter(error) ?? 2000;
+        logger.warn(`Rate limited, retrying after ${retryAfter}ms`);
+        await sleep(retryAfter);
+        try {
+          await channel.send(chunks[i]!);
+        } catch (retryError) {
+          logger.error(`Failed to send message after retry: ${String(retryError)}`);
+        }
+      } else {
+        logger.error(`Failed to send message: ${String(error)}`);
+      }
+    }
+    // 2チャンク以上の場合、連続投稿間に遅延を挿入
+    if (i < chunks.length - 1) {
+      await sleep(RATE_LIMIT_DELAY_MS);
     }
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRateLimitError(error: unknown): boolean {
+  if (error && typeof error === "object" && "status" in error) {
+    return (error as { status: number }).status === 429;
+  }
+  return false;
+}
+
+function extractRetryAfter(error: unknown): number | null {
+  if (error && typeof error === "object" && "retryAfter" in error) {
+    const val = (error as { retryAfter: unknown }).retryAfter;
+    if (typeof val === "number") return val * 1000; // 秒をmsに変換
+  }
+  return null;
 }
 
 /**

@@ -7,7 +7,7 @@ import { handleMessage, handleThreadCreate, setWatcher } from "./bot/handler.ts"
 import { sendToDiscord } from "./bot/responder.ts";
 import { handleInteraction, sendToolApproval, sendAskUser, getPendingInteraction, clearPendingInteraction } from "./bot/interactions.ts";
 import type { ToolApprovalInfo, AskUserInfo } from "./types.ts";
-import { createSession, hasSession, killSession, checkDependencies } from "./tmux/manager.ts";
+import { createSession, hasSession, killSession, listSessions, checkDependencies } from "./tmux/manager.ts";
 import { OutputWatcher } from "./tmux/watcher.ts";
 import type { OutputEvent } from "./types.ts";
 
@@ -157,6 +157,35 @@ async function main(): Promise<void> {
 
   // 9. メインセッションの監視開始（ログイン完了後に開始）
   watcher.watch(MAIN_SESSION_NAME);
+
+  // 10. グレースフルシャットダウン
+  let isShuttingDown = false;
+
+  async function gracefulShutdown(signal: string): Promise<void> {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
+    logger.info(`Received ${signal}, shutting down...`);
+
+    // 1. OutputWatcher の全監視を停止
+    watcher.unwatchAll();
+
+    // 2. 全 tmux セッション（ccbot- プレフィックス）を killSession
+    const sessions = await listSessions();
+    for (const fullName of sessions) {
+      const name = fullName.replace(/^ccbot-/, "");
+      await killSession(name);
+    }
+
+    // 3. Discord クライアントの切断
+    await discord.destroy();
+
+    logger.info("Shutdown complete");
+    process.exit(0);
+  }
+
+  process.on("SIGINT", () => void gracefulShutdown("SIGINT"));
+  process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));
 
   logger.info("Bot is ready");
 }

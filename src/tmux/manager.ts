@@ -66,7 +66,7 @@ export async function sendKeys(name: string, keys: string): Promise<void> {
 
 export async function capturePane(
   name: string,
-  lines: number = 200,
+  lines: number = 500,
 ): Promise<string> {
   const sessionName = `${SESSION_PREFIX}${name}`;
   return await runTmux([

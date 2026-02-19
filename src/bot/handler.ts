@@ -27,6 +27,15 @@ export function setWatcher(w: OutputWatcher): void {
   watcher = w;
 }
 
+/**
+ * ユーザーが操作を許可されているか確認する。
+ * DISCORD_USER_ID 未設定時は全員許可。
+ */
+export function isAuthorizedUser(userId: string): boolean {
+  if (!config.discordUserId) return true;
+  return userId === config.discordUserId;
+}
+
 /** パストラバーサル防止: システムディレクトリへのセッション作成をブロック */
 const BLOCKED_PATHS = ["/", "/etc", "/sys", "/proc", "/dev", "/boot", "/sbin", "/bin", "/usr/sbin", "/usr/bin"];
 
