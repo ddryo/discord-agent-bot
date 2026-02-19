@@ -15,4 +15,4 @@
 ## プロジェクトのドキュメント
 
 - プロジェクトの仕様書: `docs/spec.md`
-- 実装ロードマップ: `docs/raodmap.md`
+- 実装ロードマップ: `docs/roadmap.md`
