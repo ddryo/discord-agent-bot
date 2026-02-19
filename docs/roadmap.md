@@ -57,6 +57,9 @@
 - SessionStore に getSessionByName() を追加し、sessionName → threadId の逆引きを実現
 - index.ts の output イベントハンドラで sessionName に基づいてメインチャンネル/スレッドへ正しくルーティング
 - threadCreate イベントで自動的にセッション作成・監視開始・SessionStore 登録を実施
+- handler.ts の handleThreadCreate でスレッドタイトルを expandTilde + resolve でパス解釈し、existsSync で存在チェック
+- handleThreadMessage はスレッドの parentId を検証し、対象チャンネルの子スレッドのみ処理する
+- client.ts に ThreadCreateHandler 型と onThreadCreate イベント登録を追加
 
 
 ## M3: インタラクション（通知・応答）
