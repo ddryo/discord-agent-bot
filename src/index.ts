@@ -129,10 +129,14 @@ async function main(): Promise<void> {
     logger.debug(`Tool use: session=${sessionName}, tool=${toolName}`);
   });
 
-  sessionMgr.on("toolBlocked", (sessionName, toolName, toolInput, _errorContent) => {
+  sessionMgr.on("toolBlocked", (sessionName, toolName, toolInput, _errorContent, bufferedText) => {
     void (async () => {
       const channel = resolveChannel(sessionName);
       if (!channel) return;
+      // toolBlocked 前の蓄積テキストがあれば先に配信
+      if (bufferedText.trim()) {
+        await sendToDiscord(channel, bufferedText);
+      }
       await sendToolBlockedNotification(channel, sessionName, toolName, toolInput);
     })();
   });

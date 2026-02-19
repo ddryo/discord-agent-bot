@@ -15,7 +15,7 @@ interface SessionEntry {
 export interface SessionManagerEvents {
   response: [sessionName: string, text: string, usage: { inputTokens: number; outputTokens: number }];
   toolUse: [sessionName: string, toolName: string, toolInput: Record<string, unknown>];
-  toolBlocked: [sessionName: string, toolName: string, toolInput: Record<string, unknown>, errorContent: string];
+  toolBlocked: [sessionName: string, toolName: string, toolInput: Record<string, unknown>, errorContent: string, bufferedText: string];
   askUser: [sessionName: string, question: string, options: string[]];
   error: [sessionName: string, message: string];
   idle: [sessionName: string];
@@ -126,12 +126,10 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
       });
 
       proc.on("toolBlocked", (toolName, toolInput, errorContent) => {
-        // toolBlocked の前に蓄積テキストを先に配信（Discord で通知より前にテキストを表示するため）
-        if (entry.textBuffer.trim()) {
-          this.emit("response", name, entry.textBuffer, { inputTokens: 0, outputTokens: 0 });
-          entry.textBuffer = "";
-        }
-        this.emit("toolBlocked", name, toolName, toolInput, errorContent);
+        // 蓄積テキストを toolBlocked イベントに含めて渡す（index.ts 側で先に配信）
+        const bufferedText = entry.textBuffer;
+        entry.textBuffer = "";
+        this.emit("toolBlocked", name, toolName, toolInput, errorContent, bufferedText);
       });
 
       proc.on("askUser", (question, options, _toolUseId) => {

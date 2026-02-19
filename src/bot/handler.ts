@@ -325,34 +325,32 @@ export async function handleThreadCreate(
   const rawPath = thread.name;
   logger.info(`Thread created: ${threadId} (title: "${rawPath}")`);
 
+  // パスの検証とフォールバック
+  let resolvedPath: string;
   const expandedPath = expandTilde(rawPath);
-  const resolvedPath = resolve(expandedPath);
+  const candidatePath = resolve(expandedPath);
 
-  // システムディレクトリへのアクセスをブロック
-  if (BLOCKED_PATHS.includes(resolvedPath)) {
-    logger.warn(`Blocked system path: ${resolvedPath}`);
-    await thread.send(
-      `エラー: システムディレクトリ \`${resolvedPath}\` は使用できません。`,
-    );
-    return;
-  }
-
-  // パスの存在・ディレクトリチェック
-  try {
-    const stats = await stat(resolvedPath);
-    if (!stats.isDirectory()) {
-      logger.warn(`Path is not a directory: ${resolvedPath}`);
-      await thread.send(
-        `エラー: パス \`${rawPath}\` はディレクトリではありません。有効なディレクトリパスをスレッドタイトルに指定してください。`,
-      );
-      return;
+  if (BLOCKED_PATHS.includes(candidatePath)) {
+    logger.warn(`Blocked system path: ${candidatePath}, falling back to default`);
+    resolvedPath = config.defaultCwd;
+  } else {
+    let isValidDir = false;
+    try {
+      const stats = await stat(candidatePath);
+      isValidDir = stats.isDirectory();
+    } catch {
+      // パスが存在しない
     }
-  } catch {
-    logger.warn(`Path does not exist: ${resolvedPath}`);
-    await thread.send(
-      `エラー: パス \`${rawPath}\` は存在しません。有効なディレクトリパスをスレッドタイトルに指定してください。`,
-    );
-    return;
+
+    if (isValidDir) {
+      resolvedPath = candidatePath;
+    } else {
+      logger.info(`Invalid path "${rawPath}", falling back to default: ${config.defaultCwd}`);
+      resolvedPath = config.defaultCwd;
+      await thread.send(
+        `パス \`${rawPath}\` が無効なため、デフォルトパス \`${config.defaultCwd}\` で開始します。`,
+      );
+    }
   }
 
   const sessionName = threadId;
