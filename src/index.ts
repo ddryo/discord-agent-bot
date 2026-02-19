@@ -5,8 +5,8 @@ import { sessionStore } from "./sessions/store.ts";
 import { createDiscordClient } from "./bot/client.ts";
 import { handleMessage, handleThreadCreate, setWatcher } from "./bot/handler.ts";
 import { sendToDiscord } from "./bot/responder.ts";
-import { handleInteraction, sendToolApproval } from "./bot/interactions.ts";
-import type { ToolApprovalInfo } from "./types.ts";
+import { handleInteraction, sendToolApproval, sendAskUser } from "./bot/interactions.ts";
+import type { ToolApprovalInfo, AskUserInfo } from "./types.ts";
 import { createSession, hasSession, killSession } from "./tmux/manager.ts";
 import { OutputWatcher } from "./tmux/watcher.ts";
 import type { OutputEvent } from "./types.ts";
@@ -94,10 +94,11 @@ async function main(): Promise<void> {
           await sendToDiscord(target, event.content);
         } else if (event.type === "tool_approval" && event.metadata) {
           await sendToolApproval(target, sessionName, event.metadata as ToolApprovalInfo);
+        } else if (event.type === "ask_user" && event.metadata) {
+          await sendAskUser(target, sessionName, event.metadata as AskUserInfo);
         }
-        // TODO(M3): ask_user → 質問 + 選択肢で通知・応答処理
-        // TODO(M3): session_end → セッション終了通知
-        // TODO(M3): error → エラー通知
+        // TODO(M4): session_end → セッション終了通知
+        // TODO(M4): error → エラー通知
       }
     })();
   });

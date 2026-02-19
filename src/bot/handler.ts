@@ -7,6 +7,7 @@ import { createLogger } from "../logger.ts";
 import { createSession, hasSession, killSession, sendInput } from "../tmux/manager.ts";
 import { sessionStore } from "../sessions/store.ts";
 import type { OutputWatcher } from "../tmux/watcher.ts";
+import { getPendingInteraction, handleAskUserTextResponse } from "./interactions.ts";
 
 const logger = createLogger("bot:handler");
 
@@ -66,6 +67,12 @@ export async function handleMessage(message: Message): Promise<void> {
     return;
   }
 
+  // AskUser 待ちの場合はテキスト返答として処理
+  if (getPendingInteraction(MAIN_SESSION_NAME) === "ask_user") {
+    await handleAskUserTextResponse(MAIN_SESSION_NAME, text);
+    return;
+  }
+
   // Claude CLI にメッセージを送信
   await sendInput(MAIN_SESSION_NAME, text);
 }
@@ -114,6 +121,12 @@ async function handleThreadMessage(message: Message): Promise<void> {
   // コマンド判定
   if (text.startsWith("/")) {
     await handleCommand(message, session.name, threadId, text);
+    return;
+  }
+
+  // AskUser 待ちの場合はテキスト返答として処理
+  if (getPendingInteraction(session.name) === "ask_user") {
+    await handleAskUserTextResponse(session.name, text);
     return;
   }
 
