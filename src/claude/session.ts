@@ -193,6 +193,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
     if (!entry) return;
 
     entry.info.claudeSessionId = null;
+    entry.info.additionalAllowedTools.clear();
     logger.info(`Session cleared: ${name}`);
   }
 
