@@ -14,23 +14,29 @@
 
 | タスクID | 状態 | 依存タスク | 対応要件 | 概要 |
 |----|------|------|--------|--------|
-| T-M1-1 | ⬜ | - | - | プロジェクト初期化（Bun + TypeScript + discord.js） |
-| T-M1-2 | ⬜ | T-M1-1 | - | 環境変数・設定モジュール（config.ts） |
-| T-M1-3 | ⬜ | T-M1-1 | - | ログ出力モジュール（logger.ts） |
-| T-M1-4 | ⬜ | T-M1-1 | - | 型定義（types.ts） |
-| T-M1-5 | ⬜ | T-M1-2 | FR-002 | tmux セッション管理（tmux/manager.ts） |
-| T-M1-6 | ⬜ | T-M1-5 | FR-004 | 出力パーサー（tmux/parser.ts）-- ANSI 除去・基本パターン検出 |
-| T-M1-7 | ⬜ | T-M1-5, T-M1-6 | FR-003 | 出力監視（tmux/watcher.ts）-- ポーリング・差分検出 |
-| T-M1-8 | ⬜ | T-M1-2 | - | Discord クライアント初期化（bot/client.ts） |
-| T-M1-9 | ⬜ | T-M1-8, T-M1-5 | FR-001 | メッセージ受信・振り分け（bot/handler.ts） |
-| T-M1-10 | ⬜ | T-M1-8, T-M1-7 | FR-001, FR-018 | Discord 投稿（bot/responder.ts）-- 分割・整形 |
-| T-M1-11 | ⬜ | T-M1-5 | FR-005 | セッション状態管理（sessions/store.ts）-- メインセッション |
-| T-M1-12 | ⬜ | T-M1-9, T-M1-10, T-M1-11 | FR-001, FR-005 | エントリーポイント統合（index.ts）-- 全モジュール結合・E2E 動作確認 |
+| T-M1-1 | ✅ | - | - | プロジェクト初期化（Bun + TypeScript + discord.js） |
+| T-M1-2 | ✅ | T-M1-1 | - | 環境変数・設定モジュール（config.ts） |
+| T-M1-3 | ✅ | T-M1-1 | - | ログ出力モジュール（logger.ts） |
+| T-M1-4 | ✅ | T-M1-1 | - | 型定義（types.ts） |
+| T-M1-5 | ✅ | T-M1-2 | FR-002 | tmux セッション管理（tmux/manager.ts） |
+| T-M1-6 | ✅ | T-M1-5 | FR-004 | 出力パーサー（tmux/parser.ts）-- ANSI 除去・基本パターン検出 |
+| T-M1-7 | ✅ | T-M1-5, T-M1-6 | FR-003 | 出力監視（tmux/watcher.ts）-- ポーリング・差分検出 |
+| T-M1-8 | ✅ | T-M1-2 | - | Discord クライアント初期化（bot/client.ts） |
+| T-M1-9 | ✅ | T-M1-8, T-M1-5 | FR-001 | メッセージ受信・振り分け（bot/handler.ts） |
+| T-M1-10 | ✅ | T-M1-8, T-M1-7 | FR-001, FR-018 | Discord 投稿（bot/responder.ts）-- 分割・整形 |
+| T-M1-11 | ✅ | T-M1-5 | FR-005 | セッション状態管理（sessions/store.ts）-- メインセッション |
+| T-M1-12 | ✅ | T-M1-9, T-M1-10, T-M1-11 | FR-001, FR-005 | エントリーポイント統合（index.ts）-- 全モジュール結合・E2E 動作確認 |
 
 ### マイルストーン達成条件
-- [ ] チャンネルにメッセージを送ると、Claude の応答が Discord に返ってくる
-- [ ] メインセッション（ccbot-main）が自動起動する
-- [ ] ANSI エスケープが除去されたクリーンなテキストが投稿される
+- [x] チャンネルにメッセージを送ると、Claude の応答が Discord に返ってくる
+- [x] メインセッション（ccbot-main）が自動起動する
+- [x] ANSI エスケープが除去されたクリーンなテキストが投稿される
+
+### 実装メモ
+- 出力監視は capture-pane ポーリング方式を採用（pipe-pane 方式は不採用）
+- OutputWatcher は EventEmitter ベースで `"output"` イベントを発火し、イベント種別は `OutputEvent.type` で判定
+- メッセージ分割はコードブロック（```）の途中切断を回避するロジックを実装済み
+- `.env.example` は作成済み（DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID, DISCORD_USER_ID, DEFAULT_CWD, POLL_INTERVAL_MS を記載）
 
 
 ## M2: マルチセッション（スレッド対応）

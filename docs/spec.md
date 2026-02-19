@@ -24,7 +24,7 @@ Discord チャンネルから Claude Code CLI を操作する Bot を提供す�
 |----|--------|------|--------|-----|
 | FR-001 | メッセージ送受信 | チャンネルのメッセージを Claude CLI に送信し、応答を Discord に投稿する | Must | o |
 | FR-002 | tmux セッション管理 | Claude CLI プロセスを tmux セッションとして作成・破棄・制御する | Must | o |
-| FR-003 | 出力監視 | tmux の出力をポーリングまたは pipe-pane で監視し、差分を検出する | Must | o |
+| FR-003 | 出力監視 | tmux の出力を capture-pane ポーリングで監視し、差分を検出する | Must | o |
 | FR-004 | 出力パース | raw テキストを正規化イベント（text / tool_approval / ask_user / idle / session_end / error）に変換する | Must | o |
 | FR-005 | メインセッション | メインチャンネルに紐づく常駐 Claude セッション（cwd: DEFAULT_CWD） | Must | o |
 | FR-006 | スレッドセッション | スレッド作成時にスレッドタイトルを cwd としたセッションを起動し、スレッド内メッセージを振り分ける | Must | o |
@@ -62,21 +62,21 @@ Discord チャンネルから Claude Code CLI を操作する Bot を提供す�
 ```
 discord-agent-bot/
 ├── src/
-│   ├── index.ts              # エントリーポイント
-│   ├── config.ts             # 環境変数・設定
-│   ├── logger.ts             # ログ出力
-│   ├── types.ts              # 型定義
+│   ├── index.ts              # エントリーポイント                    [M1]
+│   ├── config.ts             # 環境変数・設定                        [M1]
+│   ├── logger.ts             # ログ出力                              [M1]
+│   ├── types.ts              # 型定義                                [M1]
 │   ├── tmux/
-│   │   ├── manager.ts        # tmux セッション CRUD・入出力
-│   │   ├── watcher.ts        # 出力監視（ポーリング or pipe-pane）・差分検出
-│   │   └── parser.ts         # ANSI 除去・パターン検出・イベント変換
+│   │   ├── manager.ts        # tmux セッション CRUD・入出力          [M1]
+│   │   ├── watcher.ts        # 出力監視（capture-pane ポーリング）   [M1]
+│   │   └── parser.ts         # ANSI 除去・パターン検出・イベント変換 [M1]
 │   ├── bot/
-│   │   ├── client.ts         # Discord クライアント初期化・イベント登録
-│   │   ├── handler.ts        # メッセージ受信 → セッション振り分け
-│   │   ├── responder.ts      # Claude 出力 → Discord 投稿（分割・整形）
-│   │   └── interactions.ts   # ツール許可・AskUser のボタン通知・応答処理
+│   │   ├── client.ts         # Discord クライアント初期化・イベント登録 [M1]
+│   │   ├── handler.ts        # メッセージ受信 → セッション振り分け   [M1]
+│   │   ├── responder.ts      # Claude 出力 → Discord 投稿（分割・整形）[M1]
+│   │   └── interactions.ts   # ツール許可・AskUser のボタン通知・応答処理 [M3]
 │   └── sessions/
-│       └── store.ts          # threadId <-> tmux セッションの対応管理
+│       └── store.ts          # threadId <-> tmux セッションの対応管理 [M1]
 ├── docs/
 ├── tests/
 └── .env
@@ -88,7 +88,7 @@ discord-agent-bot/
 Discord チャンネル (DISCORD_CHANNEL_ID)
 |
 +-- メッセージ ----------> メイン tmux セッション (ccbot-main, cwd: DEFAULT_CWD)
-|   +-- Claude 応答 <---- 出力監視 (capture-pane / pipe-pane)
+|   +-- Claude 応答 <---- 出力監視 (capture-pane ポーリング)
 |
 +-- スレッド「~/projects/app」 --> tmux セッション (ccbot-<threadId>)
 |   +-- メッセージ --> send-keys
@@ -133,27 +133,31 @@ raw テキストからドメインイベントへの変換を分離し、Claude 
 | `session_end` | セッション終了 |
 | `error` | エラー検出 |
 
-### 出力監視方式の検討事項
+### 出力監視方式
 
-以下の 2 方式を実装フェーズで検証し、採用を決定する。
+M1 の実装時に検討した結果、**capture-pane ポーリング方式** を採用した。
 
-| 方式 | 仕組み | メリット | デメリット |
-|------|--------|----------|------------|
-| capture-pane ポーリング | 定期的に `tmux capture-pane -p` を実行し差分比較 | 実装がシンプル | ポーリング間隔分の遅延、差分検出の複雑さ |
-| pipe-pane + fs.watch | `tmux pipe-pane` でファイルにストリーム出力し `fs.watch` で監視 | イベント駆動で低遅延 | 実機検証が未済、ファイル管理が必要 |
+| 方式 | 仕組み | メリット | デメリット | 採用 |
+|------|--------|----------|------------|------|
+| capture-pane ポーリング | 定期的に `tmux capture-pane -p` を実行し差分比較 | 実装がシンプル | ポーリング間隔分の遅延、差分検出の複雑さ | **採用** |
+| pipe-pane + fs.watch | `tmux pipe-pane` でファイルにストリーム出力し `fs.watch` で監視 | イベント駆動で低遅延 | ファイル管理が必要、バイナリ出力の扱いが煩雑 | 不採用 |
+
+差分検出は、前回キャプチャの末尾行群と今回の出力を照合し、一致位置以降を新規差分とする方式で実装している。
 
 
 ## 5. インターフェース
 
 ### tmux セッション管理 API
 
+tmux コマンドの実行には `Bun.spawn` の引数配列形式を使用し、シェル文字列結合を行わない（インジェクション対策）。セッション名には `ccbot-` プレフィックスが自動付与される。
+
 | 操作 | tmux コマンド | 説明 |
 |------|--------------|------|
-| セッション作成 | `tmux new-session -d -s {name} -c {cwd} "claude"` | Claude CLI を起動するセッションを作成 |
+| セッション作成 | `tmux new-session -d -s {name} -c {cwd} -- claude` | Claude CLI を起動するセッションを作成 |
 | セッション破棄 | `tmux kill-session -t {name}` | セッションを終了 |
-| テキスト入力 | `tmux send-keys -t {name} -l -- "{text}"` + `send-keys Enter` | Claude CLI にテキストを送信 |
+| テキスト入力 | `tmux send-keys -t {name} -l -- {text}` + `send-keys Enter` | Claude CLI にテキストを送信 |
 | 特殊キー送信 | `tmux send-keys -t {name} {keys}` | Escape, Up 等の特殊キー |
-| 画面キャプチャ | `tmux capture-pane -p -t {name} -S -{lines}` | 出力テキストを取得 |
+| 画面キャプチャ | `tmux capture-pane -p -t {name} -S -{lines}` | 出力テキストを取得（デフォルト 200 行） |
 | セッション確認 | `tmux has-session -t {name}` | セッションの存在確認 |
 | セッション一覧 | `tmux list-sessions -F "#{session_name}"` | ccbot- プレフィックスでフィルタ |
 
