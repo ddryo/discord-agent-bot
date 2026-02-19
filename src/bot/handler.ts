@@ -15,11 +15,14 @@ export async function handleMessage(message: Message): Promise<void> {
   // Bot 自身のメッセージは無視
   if (message.author.bot) return;
 
+  // スレッド内メッセージの振り分け
+  if (message.channel.isThread()) {
+    await handleThreadMessage(message);
+    return;
+  }
+
   // 対象チャンネル以外は無視
   if (message.channelId !== config.discordChannelId) return;
-
-  // スレッド内メッセージは M1 では無視（M2 で対応）
-  if (message.channel.isThread()) return;
 
   const text = message.content.trim();
   if (!text) return;
@@ -35,6 +38,38 @@ export async function handleMessage(message: Message): Promise<void> {
 
   // Claude CLI にメッセージを送信
   await sendInput(MAIN_SESSION_NAME, text);
+}
+
+/**
+ * スレッド内メッセージを対応する tmux セッションに振り分ける。
+ */
+async function handleThreadMessage(message: Message): Promise<void> {
+  const thread = message.channel;
+  if (!thread.isThread()) return;
+
+  // 対象チャンネルの子スレッドかどうかを確認
+  if (thread.parentId !== config.discordChannelId) return;
+
+  const text = message.content.trim();
+  if (!text) return;
+
+  const threadId = thread.id;
+  const session = sessionStore.getSession(threadId);
+
+  if (!session) {
+    logger.warn(`No session found for thread: ${threadId}`);
+    await thread.send(
+      "エラー: このスレッドに対応するセッションが見つかりません。",
+    );
+    return;
+  }
+
+  logger.info(
+    `Thread message from ${message.author.tag} in ${threadId}: ${text.substring(0, 80)}`,
+  );
+
+  // 対応する tmux セッションにメッセージを送信
+  await sendInput(session.name, text);
 }
 
 /**
