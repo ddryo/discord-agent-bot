@@ -60,6 +60,12 @@ export async function handleMessage(message: Message): Promise<void> {
     });
   }
 
+  // コマンド判定
+  if (text.startsWith("/")) {
+    await handleCommand(message, MAIN_SESSION_NAME, null, text);
+    return;
+  }
+
   // Claude CLI にメッセージを送信
   await sendInput(MAIN_SESSION_NAME, text);
 }
@@ -105,8 +111,89 @@ async function handleThreadMessage(message: Message): Promise<void> {
     `Thread message from ${message.author.tag} in ${threadId}: ${text.substring(0, 80)}`,
   );
 
+  // コマンド判定
+  if (text.startsWith("/")) {
+    await handleCommand(message, session.name, threadId, text);
+    return;
+  }
+
   // 対応する tmux セッションにメッセージを送信
   await sendInput(session.name, text);
+}
+
+/**
+ * コマンドを解析し、対応する処理を実行する。
+ * @param message - Discord メッセージ
+ * @param sessionName - 対象の tmux セッション名
+ * @param threadId - スレッドID（メインセッションの場合は null）
+ * @param text - メッセージ全文（"/" から始まる）
+ */
+async function handleCommand(
+  message: Message,
+  sessionName: string,
+  threadId: string | null,
+  text: string,
+): Promise<void> {
+  // コマンド名と引数を分離
+  const spaceIndex = text.indexOf(" ");
+  const commandName = (spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex)).toLowerCase();
+
+  // /exit は特別処理（T-M3-5）
+  if (commandName === "exit") {
+    await handleExitCommand(message, sessionName, threadId);
+    return;
+  }
+
+  // 対応コマンドチェック
+  if (!SUPPORTED_COMMANDS.includes(commandName)) {
+    await message.reply(`未対応のコマンドです: \`/${commandName}\``);
+    return;
+  }
+
+  logger.info(`Command: /${commandName} (session: ${sessionName})`);
+
+  // CLI にそのまま送信（Claude CLI がスラッシュコマンドとして認識する）
+  await sendInput(sessionName, text);
+
+  // /clear の特別処理: 区切り Embed を投稿
+  if (commandName === "clear") {
+    const embed = new EmbedBuilder()
+      .setDescription("--- Context Cleared ---")
+      .setColor(0x5865f2)
+      .setTimestamp();
+
+    await message.reply({ embeds: [embed] });
+  }
+}
+
+/**
+ * /exit コマンドの処理。tmux セッションを終了し、関連リソースをクリーンアップする。
+ */
+async function handleExitCommand(
+  message: Message,
+  sessionName: string,
+  threadId: string | null,
+): Promise<void> {
+  logger.info(`Exit command: session=${sessionName}, threadId=${threadId ?? "main"}`);
+
+  // tmux セッション終了
+  await killSession(sessionName);
+
+  // SessionStore からセッション情報を削除
+  sessionStore.removeSession(threadId);
+
+  // OutputWatcher の監視を停止
+  if (watcher) {
+    watcher.unwatch(sessionName);
+  }
+
+  // 終了メッセージを Discord に投稿
+  const embed = new EmbedBuilder()
+    .setDescription("セッションを終了しました。")
+    .setColor(0xed4245)
+    .setTimestamp();
+
+  await message.reply({ embeds: [embed] });
 }
 
 /**

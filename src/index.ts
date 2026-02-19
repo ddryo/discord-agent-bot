@@ -3,8 +3,10 @@ import { config } from "./config.ts";
 import { createLogger } from "./logger.ts";
 import { sessionStore } from "./sessions/store.ts";
 import { createDiscordClient } from "./bot/client.ts";
-import { handleMessage, handleThreadCreate } from "./bot/handler.ts";
+import { handleMessage, handleThreadCreate, setWatcher } from "./bot/handler.ts";
 import { sendToDiscord } from "./bot/responder.ts";
+import { handleInteraction, sendToolApproval } from "./bot/interactions.ts";
+import type { ToolApprovalInfo } from "./types.ts";
 import { createSession, hasSession, killSession } from "./tmux/manager.ts";
 import { OutputWatcher } from "./tmux/watcher.ts";
 import type { OutputEvent } from "./types.ts";
@@ -40,6 +42,9 @@ async function main(): Promise<void> {
   // 4. OutputWatcher を作成（ログイン後に監視開始）
   const watcher = new OutputWatcher();
 
+  // handler.ts から watcher を利用できるよう設定
+  setWatcher(watcher);
+
   // 5. messageCreate で handler を呼ぶ
   discord.onMessage((message) => {
     void handleMessage(message);
@@ -48,6 +53,11 @@ async function main(): Promise<void> {
   // 6. threadCreate でスレッドセッションを起動
   discord.onThreadCreate((thread, newlyCreated) => {
     void handleThreadCreate(thread, newlyCreated, watcher);
+  });
+
+  // 6.5. interactionCreate でボタン応答を処理
+  discord.onInteraction((interaction) => {
+    void handleInteraction(interaction);
   });
 
   // 7. Discord クライアントにログイン
@@ -82,8 +92,9 @@ async function main(): Promise<void> {
       for (const event of events) {
         if (event.type === "text" && event.content) {
           await sendToDiscord(target, event.content);
+        } else if (event.type === "tool_approval" && event.metadata) {
+          await sendToolApproval(target, sessionName, event.metadata as ToolApprovalInfo);
         }
-        // TODO(M3): tool_approval → Embed + ボタンで通知・応答処理
         // TODO(M3): ask_user → 質問 + 選択肢で通知・応答処理
         // TODO(M3): session_end → セッション終了通知
         // TODO(M3): error → エラー通知
