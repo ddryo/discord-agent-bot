@@ -241,12 +241,12 @@ async function handleCommand(
       .setTimestamp();
 
     embed.addFields({
-      name: "Static (ALLOWED_TOOLS)",
+      name: ".env (ALLOWED_TOOLS)",
       value: staticTools.length > 0 ? staticTools.map((t) => `\`${t}\``).join(", ") : "(none)",
     });
 
     embed.addFields({
-      name: "Dynamic (session)",
+      name: "This Session",
       value: dynamicTools.length > 0 ? dynamicTools.map((t) => `\`${t}\``).join(", ") : "(none)",
     });
 
