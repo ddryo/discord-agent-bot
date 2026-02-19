@@ -26,6 +26,8 @@ interface PendingState {
   messageId: string;
   /** toolBlocked 時のツール名 */
   toolName?: string;
+  /** toolBlocked 時のツール入力（パターン生成用） */
+  toolInput?: Record<string, unknown>;
 }
 
 /** セッションごとの待機中インタラクション状態 */
@@ -83,7 +85,7 @@ export async function sendToolBlockedNotification(
   );
 
   const sent = await channel.send({ embeds: [embed], components: [row] });
-  pendingInteractions.set(sessionName, { type: "tool_blocked", messageId: sent.id, toolName });
+  pendingInteractions.set(sessionName, { type: "tool_blocked", messageId: sent.id, toolName, toolInput });
 }
 
 /**
@@ -136,23 +138,25 @@ function consumePending(sessionName: string, messageId: string, expectedType: Pe
 }
 
 /**
- * ToolBlocked の Approve ボタン応答を処理する
+ * toolName + toolInput から --allowedTools 用の許可パターンを生成する。
+ * Bash の場合はコマンドの先頭語に絞る（例: "mkdir -p foo" → "Bash(mkdir:*)"）。
  */
-async function handleToolApproveButton(
-  interaction: ButtonInteraction,
-  sessionName: string,
-  toolName: string,
-): Promise<void> {
-  if (!sessionManager) {
-    await interaction.reply({ content: "エラー: SessionManager が初期化されていません。", flags: 64 });
-    return;
+function buildAllowedToolPattern(toolName: string, toolInput?: Record<string, unknown>): string {
+  if (toolName === "Bash" && toolInput && typeof toolInput.command === "string") {
+    const command = toolInput.command.trim();
+    const firstWord = command.split(/\s+/)[0];
+    if (firstWord) {
+      return `Bash(${firstWord}:*)`;
+    }
   }
+  return toolName;
+}
 
-  // セッションに動的ツール許可を追加
-  sessionManager.addAllowedTool(sessionName, toolName);
-  logger.info(`Tool approved: ${toolName} for session ${sessionName}`);
-
-  const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+/**
+ * Approve/Deny 共通: ボタン無効化した ActionRow を生成する
+ */
+function buildDisabledRow(sessionName: string): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(`tool_approve:${sessionName}`)
       .setLabel("Approve")
@@ -164,11 +168,54 @@ async function handleToolApproveButton(
       .setStyle(ButtonStyle.Danger)
       .setDisabled(true),
   );
+}
+
+/**
+ * ボタン応答後に Claude セッションへ自動再送信する
+ */
+async function autoResendToSession(sessionName: string, text: string): Promise<void> {
+  if (!sessionManager) return;
+
+  if (sessionManager.isBusy(sessionName)) {
+    logger.warn(`Session is busy, skipping auto-resend: ${sessionName}`);
+    return;
+  }
+
+  try {
+    await sessionManager.sendMessage(sessionName, text);
+  } catch (error) {
+    logger.error(`Failed to auto-resend after button action: ${String(error)}`);
+  }
+}
+
+/**
+ * ToolBlocked の Approve ボタン応答を処理する
+ */
+async function handleToolApproveButton(
+  interaction: ButtonInteraction,
+  sessionName: string,
+  toolName: string,
+  toolInput?: Record<string, unknown>,
+): Promise<void> {
+  if (!sessionManager) {
+    await interaction.reply({ content: "エラー: SessionManager が初期化されていません。", flags: 64 });
+    return;
+  }
+
+  // コマンド単位の許可パターンを生成して追加
+  const pattern = buildAllowedToolPattern(toolName, toolInput);
+  sessionManager.addAllowedTool(sessionName, pattern);
+  logger.info(`Tool approved: ${pattern} for session ${sessionName}`);
+
+  const disabledRow = buildDisabledRow(sessionName);
 
   await interaction.update({
-    content: `**Approved: ${toolName}** by ${interaction.user.tag}\n次のメッセージ送信時に再試行されます。`,
+    content: `**Approved: ${pattern}** by ${interaction.user.tag}`,
     components: [disabledRow],
   });
+
+  // Claude に自動再送信してリトライ
+  await autoResendToSession(sessionName, `Approved: ${pattern}`);
 }
 
 /**
@@ -177,24 +224,17 @@ async function handleToolApproveButton(
 async function handleToolDenyButton(
   interaction: ButtonInteraction,
   sessionName: string,
+  toolName: string,
 ): Promise<void> {
-  const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`tool_approve:${sessionName}`)
-      .setLabel("Approve")
-      .setStyle(ButtonStyle.Primary)
-      .setDisabled(true),
-    new ButtonBuilder()
-      .setCustomId(`tool_deny:${sessionName}`)
-      .setLabel("Deny")
-      .setStyle(ButtonStyle.Danger)
-      .setDisabled(true),
-  );
+  const disabledRow = buildDisabledRow(sessionName);
 
   await interaction.update({
-    content: `**Denied** by ${interaction.user.tag}`,
+    content: `**Denied: ${toolName}** by ${interaction.user.tag}`,
     components: [disabledRow],
   });
+
+  // Claude に deny を通知して続行させる
+  await autoResendToSession(sessionName, `Denied: ${toolName}`);
 }
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
@@ -219,18 +259,19 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       await interaction.reply({ content: "この操作は既に処理済みです。", flags: 64 });
       return;
     }
-    await handleToolApproveButton(interaction, sessionName, pending.toolName ?? "unknown");
+    await handleToolApproveButton(interaction, sessionName, pending.toolName ?? "unknown", pending.toolInput);
     return;
   }
 
   // Deny ボタン
   if (customId.startsWith("tool_deny:")) {
     const sessionName = customId.slice("tool_deny:".length);
-    if (!consumePending(sessionName, messageId, "tool_blocked")) {
+    const pending = consumePending(sessionName, messageId, "tool_blocked");
+    if (!pending) {
       await interaction.reply({ content: "この操作は既に処理済みです。", flags: 64 });
       return;
     }
-    await handleToolDenyButton(interaction, sessionName);
+    await handleToolDenyButton(interaction, sessionName, pending.toolName ?? "unknown");
     return;
   }
 }

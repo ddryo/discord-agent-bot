@@ -245,6 +245,25 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
   }
 
   /**
+   * セッションの動的ツール許可リストを取得する。
+   */
+  getAllowedTools(name: string): string[] {
+    const entry = this.sessions.get(name);
+    if (!entry) return [];
+    return [...entry.info.additionalAllowedTools];
+  }
+
+  /**
+   * セッションの動的ツール許可リストをクリアする。
+   */
+  clearAllowedTools(name: string): void {
+    const entry = this.sessions.get(name);
+    if (!entry) return;
+    entry.info.additionalAllowedTools.clear();
+    logger.info(`Allowed tools cleared: ${name}`);
+  }
+
+  /**
    * 全セッションのプロセスを終了する。
    */
   killAll(): void {

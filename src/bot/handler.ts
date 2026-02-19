@@ -14,7 +14,7 @@ const logger = createLogger("bot:handler");
 const MAIN_SESSION_NAME = "main";
 
 /** 対応するコマンド一覧 */
-const SUPPORTED_COMMANDS = ["clear", "cost", "status"];
+const SUPPORTED_COMMANDS = ["clear", "cost", "status", "tools"];
 
 /** SessionManager への参照（index.ts から setSessionManager で設定） */
 let sessionManager: SessionManager | null = null;
@@ -211,6 +211,46 @@ async function handleCommand(
     } else {
       embed.setDescription("セッションが見つかりません。");
     }
+
+    await message.reply({ embeds: [embed] });
+    return;
+  }
+
+  if (commandName === "tools") {
+    const subcommand = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1).trim().toLowerCase();
+
+    if (subcommand === "clear") {
+      sessionManager.clearAllowedTools(sessionName);
+
+      const embed = new EmbedBuilder()
+        .setDescription("動的ツール許可をクリアしました。")
+        .setColor(0x5865f2)
+        .setTimestamp();
+
+      await message.reply({ embeds: [embed] });
+      return;
+    }
+
+    // /tools（サブコマンドなし）: 許可リスト表示
+    const staticTools = config.allowedTools;
+    const dynamicTools = sessionManager.getAllowedTools(sessionName);
+
+    const embed = new EmbedBuilder()
+      .setTitle("Allowed Tools")
+      .setColor(0x5865f2)
+      .setTimestamp();
+
+    embed.addFields({
+      name: "Static (ALLOWED_TOOLS)",
+      value: staticTools.length > 0 ? staticTools.map((t) => `\`${t}\``).join(", ") : "(none)",
+    });
+
+    embed.addFields({
+      name: "Dynamic (session)",
+      value: dynamicTools.length > 0 ? dynamicTools.map((t) => `\`${t}\``).join(", ") : "(none)",
+    });
+
+    embed.setFooter({ text: "/tools clear で動的許可をクリア" });
 
     await message.reply({ embeds: [embed] });
     return;
