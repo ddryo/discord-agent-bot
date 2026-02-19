@@ -29,17 +29,17 @@ function loadConfig(): Config {
   const defaultCwd = expandTilde(
     process.env["DEFAULT_CWD"] || "~/Desktop"
   );
-  const rawPollInterval = Number(process.env["POLL_INTERVAL_MS"] || "1500");
-  const pollIntervalMs = Number.isFinite(rawPollInterval) && rawPollInterval > 0
-    ? rawPollInterval
-    : 1500;
+  const allowedToolsRaw = process.env["ALLOWED_TOOLS"] || "";
+  const allowedTools = allowedToolsRaw
+    ? allowedToolsRaw.split(",").map((t) => t.trim()).filter(Boolean)
+    : [];
 
   return {
     discordBotToken,
     discordChannelId,
     discordUserId,
     defaultCwd,
-    pollIntervalMs,
+    allowedTools,
   };
 }
 
