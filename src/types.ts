@@ -45,6 +45,8 @@ export interface TmuxSessionInfo {
   cwd: string;
   threadId: string | null;
   isMain: boolean;
+  /** createSession 完了時に resolve される Promise（レースコンディション防止用） */
+  readyPromise?: Promise<void>;
 }
 
 /**

@@ -64,6 +64,19 @@ async function handleThreadMessage(message: Message): Promise<void> {
     return;
   }
 
+  // セッション起動完了を待機（createSession 中のレースコンディション防止）
+  if (session.readyPromise) {
+    try {
+      await session.readyPromise;
+    } catch {
+      logger.warn(`Session failed to start for thread: ${threadId}`);
+      await thread.send(
+        "エラー: セッションの起動に失敗しました。",
+      );
+      return;
+    }
+  }
+
   logger.info(
     `Thread message from ${message.author.tag} in ${threadId}: ${text.substring(0, 80)}`,
   );
@@ -117,18 +130,29 @@ export async function handleThreadCreate(
   // セッション名: ccbot-{threadId}
   const sessionName = threadId;
 
+  // readyPromise: createSession 完了で resolve される
+  let resolveReady!: () => void;
+  let rejectReady!: (err: unknown) => void;
+  const readyPromise = new Promise<void>((res, rej) => {
+    resolveReady = res;
+    rejectReady = rej;
+  });
+
   // SessionStore に先行登録（メッセージ到着時のレースコンディション防止）
   sessionStore.registerSession(threadId, {
     name: sessionName,
     cwd: resolvedPath,
     threadId,
     isMain: false,
+    readyPromise,
   });
 
   // tmux セッション作成
   try {
     await createSession(sessionName, resolvedPath);
+    resolveReady();
   } catch (error) {
+    rejectReady(error);
     // 作成失敗時は先行登録を取り消す
     sessionStore.removeSession(threadId);
     logger.error(`Failed to create session for thread ${threadId}: ${String(error)}`);
