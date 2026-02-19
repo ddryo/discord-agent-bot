@@ -1,4 +1,4 @@
-import { existsSync } from "fs";
+import { statSync } from "fs";
 import { resolve } from "path";
 import type { Message, ThreadChannel } from "discord.js";
 import { config, expandTilde } from "../config.ts";
@@ -96,8 +96,17 @@ export async function handleThreadCreate(
   const expandedPath = expandTilde(rawPath);
   const resolvedPath = resolve(expandedPath);
 
-  // パスの存在チェック
-  if (!existsSync(resolvedPath)) {
+  // パスの存在・ディレクトリチェック
+  try {
+    const stat = statSync(resolvedPath);
+    if (!stat.isDirectory()) {
+      logger.warn(`Path is not a directory: ${resolvedPath}`);
+      await thread.send(
+        `エラー: パス \`${rawPath}\` はディレクトリではありません。有効なディレクトリパスをスレッドタイトルに指定してください。`,
+      );
+      return;
+    }
+  } catch {
     logger.warn(`Path does not exist: ${resolvedPath}`);
     await thread.send(
       `エラー: パス \`${rawPath}\` は存在しません。有効なディレクトリパスをスレッドタイトルに指定してください。`,
@@ -108,24 +117,26 @@ export async function handleThreadCreate(
   // セッション名: ccbot-{threadId}
   const sessionName = threadId;
 
-  // tmux セッション作成
-  try {
-    await createSession(sessionName, resolvedPath);
-  } catch (error) {
-    logger.error(`Failed to create session for thread ${threadId}: ${String(error)}`);
-    await thread.send(
-      `エラー: セッションの作成に失敗しました。\n\`${String(error)}\``,
-    );
-    return;
-  }
-
-  // SessionStore に登録
+  // SessionStore に先行登録（メッセージ到着時のレースコンディション防止）
   sessionStore.registerSession(threadId, {
     name: sessionName,
     cwd: resolvedPath,
     threadId,
     isMain: false,
   });
+
+  // tmux セッション作成
+  try {
+    await createSession(sessionName, resolvedPath);
+  } catch (error) {
+    // 作成失敗時は先行登録を取り消す
+    sessionStore.removeSession(threadId);
+    logger.error(`Failed to create session for thread ${threadId}: ${String(error)}`);
+    await thread.send(
+      `エラー: セッションの作成に失敗しました。\n\`${String(error)}\``,
+    );
+    return;
+  }
 
   // OutputWatcher で監視開始
   watcher.watch(sessionName);
