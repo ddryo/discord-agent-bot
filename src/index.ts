@@ -1,13 +1,13 @@
-import { type TextChannel, type ThreadChannel } from "discord.js";
+import { type TextChannel, type ThreadChannel, EmbedBuilder } from "discord.js";
 import { config } from "./config.ts";
 import { createLogger } from "./logger.ts";
 import { sessionStore } from "./sessions/store.ts";
 import { createDiscordClient } from "./bot/client.ts";
 import { handleMessage, handleThreadCreate, setWatcher } from "./bot/handler.ts";
 import { sendToDiscord } from "./bot/responder.ts";
-import { handleInteraction, sendToolApproval, sendAskUser, getPendingInteraction } from "./bot/interactions.ts";
+import { handleInteraction, sendToolApproval, sendAskUser, getPendingInteraction, clearPendingInteraction } from "./bot/interactions.ts";
 import type { ToolApprovalInfo, AskUserInfo } from "./types.ts";
-import { createSession, hasSession, killSession } from "./tmux/manager.ts";
+import { createSession, hasSession, killSession, checkDependencies } from "./tmux/manager.ts";
 import { OutputWatcher } from "./tmux/watcher.ts";
 import type { OutputEvent } from "./types.ts";
 
@@ -102,9 +102,52 @@ async function main(): Promise<void> {
             await sendAskUser(target, sessionName, event.metadata as AskUserInfo);
           }
         }
-        // TODO(M4): session_end → セッション終了通知
+        if (event.type === "session_end") {
+          // セッション終了: クリーンアップ（通知は T-M4-6 で実装）
+          const session = sessionStore.getSessionByName(sessionName);
+          if (session) {
+            sessionStore.removeSession(session.threadId);
+          }
+          watcher.unwatch(sessionName);
+          clearPendingInteraction(sessionName);
+          logger.info(`Session ended: ${sessionName}`);
+        }
         // TODO(M4): error → エラー通知
       }
+    })();
+  });
+
+  // 8.5. session_dead イベントで Discord にエラー通知 + クリーンアップ
+  watcher.on("session_dead", (sessionName: string) => {
+    void (async () => {
+      const session = sessionStore.getSessionByName(sessionName);
+
+      // Discord チャンネルにエラー通知を投稿
+      let target: TextChannel | ThreadChannel | undefined;
+      if (sessionName === MAIN_SESSION_NAME) {
+        target = discord.client.channels.cache.get(
+          config.discordChannelId,
+        ) as TextChannel | undefined;
+      } else if (session?.threadId) {
+        target = discord.client.channels.cache.get(
+          session.threadId,
+        ) as ThreadChannel | undefined;
+      }
+
+      if (target) {
+        const embed = new EmbedBuilder()
+          .setTitle("Session Error")
+          .setDescription("セッションが予期せず終了しました。")
+          .setColor(0xed4245);
+        await target.send({ embeds: [embed] });
+      }
+
+      // クリーンアップ
+      if (session) {
+        sessionStore.removeSession(session.threadId);
+      }
+      clearPendingInteraction(sessionName);
+      logger.warn(`Session dead cleaned up: ${sessionName}`);
     })();
   });
 
@@ -113,6 +156,15 @@ async function main(): Promise<void> {
 
   logger.info("Bot is ready");
 }
+
+// Bot 全体のクラッシュ防止
+process.on("unhandledRejection", (reason: unknown) => {
+  logger.error(`Unhandled rejection: ${String(reason)}`);
+});
+
+process.on("uncaughtException", (error: Error) => {
+  logger.error(`Uncaught exception: ${error.message}\n${error.stack ?? ""}`);
+});
 
 main().catch((error: unknown) => {
   logger.error(`Fatal error: ${String(error)}`);

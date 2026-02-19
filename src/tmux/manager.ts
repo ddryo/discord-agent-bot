@@ -89,6 +89,32 @@ export async function hasSession(name: string): Promise<boolean> {
   }
 }
 
+/**
+ * tmux と Claude CLI の存在を確認する。
+ * 未インストールの場合はエラーをスローする。
+ */
+export async function checkDependencies(): Promise<{ tmux: string; claude: string }> {
+  let tmuxVersion: string;
+  try {
+    const proc = Bun.spawn(["tmux", "-V"], { stdout: "pipe", stderr: "pipe" });
+    tmuxVersion = (await new Response(proc.stdout).text()).trim();
+    await proc.exited;
+  } catch {
+    throw new Error("tmux が見つかりません。tmux をインストールしてください。");
+  }
+
+  let claudeVersion: string;
+  try {
+    const proc = Bun.spawn(["claude", "--version"], { stdout: "pipe", stderr: "pipe" });
+    claudeVersion = (await new Response(proc.stdout).text()).trim();
+    await proc.exited;
+  } catch {
+    throw new Error("Claude CLI (claude) が見つかりません。Claude CLI をインストールしてください。");
+  }
+
+  return { tmux: tmuxVersion, claude: claudeVersion };
+}
+
 export async function listSessions(): Promise<string[]> {
   try {
     const output = await runTmux([
