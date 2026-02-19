@@ -42,6 +42,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
   /**
    * セッションにメッセージを送信する。
    * プロセスを起動し、応答完了まで待機する。
+   * --resume 失敗時はセッションIDをリセットして自動リトライする。
    */
   async sendMessage(name: string, text: string): Promise<void> {
     const entry = this.sessions.get(name);
@@ -53,10 +54,37 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
       throw new Error(`Session is busy: ${name}`);
     }
 
+    const hadSessionId = !!entry.info.claudeSessionId;
+    const result = await this.runProcess(entry, text);
+
+    // --resume 失敗検知: 非ゼロ終了 + セッションID有り + result未受信 → リトライ
+    if (!result.resultReceived && result.exitCode !== 0 && hadSessionId) {
+      logger.warn(
+        `Session resume failed (exit code ${result.exitCode}), resetting session ID and retrying: ${name}`,
+      );
+      entry.info.claudeSessionId = null;
+      this.emit(
+        "error",
+        name,
+        "セッションの再開に失敗したため、新しいセッションで再試行します。（以前の会話コンテキストはリセットされています）",
+      );
+      await this.runProcess(entry, text);
+    }
+  }
+
+  /**
+   * claude -p プロセスを1回実行する。
+   * isRetry=false の場合、resume 失敗の可能性があるため error イベントを抑制する。
+   */
+  private runProcess(
+    entry: SessionEntry,
+    text: string,
+    isRetry = false,
+  ): Promise<{ resultReceived: boolean; exitCode: number }> {
+    const name = entry.info.name;
     entry.info.state = "running";
     entry.textBuffer = "";
 
-    // allowedTools: 静的リスト + セッション動的リスト
     const allowedTools = [
       ...config.allowedTools,
       ...entry.info.additionalAllowedTools,
@@ -70,7 +98,9 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
 
     entry.process = proc;
 
-    return new Promise<void>((resolve) => {
+    return new Promise((resolve) => {
+      let resultReceived = false;
+
       proc.on("system", (sessionId) => {
         entry.info.claudeSessionId = sessionId;
         logger.info(`Session ID acquired: ${name} → ${sessionId}`);
@@ -93,6 +123,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
       });
 
       proc.on("result", (_fullText, usage) => {
+        resultReceived = true;
         entry.info.usage.inputTokens += usage.inputTokens;
         entry.info.usage.outputTokens += usage.outputTokens;
 
@@ -101,7 +132,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
         entry.process = null;
 
         this.emit("response", name, responseText, usage);
-        resolve();
+        resolve({ resultReceived: true, exitCode: 0 });
       });
 
       proc.on("error", (message) => {
@@ -112,11 +143,15 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
         entry.info.state = "idle";
         entry.process = null;
 
-        if (exitCode !== 0) {
+        if (exitCode !== 0 && resultReceived) {
+          // result は受信済みだが異常終了 → エラー通知
+          this.emit("error", name, `Process exited with code ${exitCode}`);
+        } else if (exitCode !== 0 && !resultReceived && isRetry) {
+          // リトライ後も失敗 → エラー通知
           this.emit("error", name, `Process exited with code ${exitCode}`);
         }
-        // result が先に来ない場合（異常終了等）の安全弁
-        resolve();
+        // !resultReceived && !isRetry の場合は sendMessage 側でリトライ判定するため抑制
+        resolve({ resultReceived, exitCode });
       });
 
       proc.run(text);
