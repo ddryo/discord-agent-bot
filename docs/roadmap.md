@@ -16,7 +16,7 @@
 |----|------|------|--------|--------|
 | T-M1-1 | ✅ | - | - | プロジェクト初期化（Bun + TypeScript + discord.js） |
 | T-M1-2 | ⬜ | T-M1-1 | - | 環境変数・設定モジュール（config.ts） |
-| T-M1-3 | 🔄 | T-M1-1 | - | ログ出力モジュール（logger.ts） |
+| T-M1-3 | ✅ | T-M1-1 | - | ログ出力モジュール（logger.ts） |
 | T-M1-4 | 🔄 | T-M1-1 | - | 型定義（types.ts） |
 | T-M1-5 | ⬜ | T-M1-2 | FR-002 | tmux セッション管理（tmux/manager.ts） |
 | T-M1-6 | ⬜ | T-M1-5 | FR-004 | 出力パーサー（tmux/parser.ts）-- ANSI 除去・基本パターン検出 |
