@@ -1,0 +1,2 @@
+# Markdownは常にPrettierの対象外
+**/*.md
