@@ -238,6 +238,13 @@ async function handleToolDenyButton(
 }
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
+  // Application Command（スラッシュコマンド）は handler.ts で処理
+  if (interaction.isChatInputCommand()) {
+    const { handleCommandInteraction } = await import("./handler.ts");
+    await handleCommandInteraction(interaction);
+    return;
+  }
+
   if (!interaction.isButton()) return;
 
   if (!isAuthorizedUser(interaction.user.id)) {

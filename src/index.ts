@@ -2,7 +2,8 @@ import type { TextChannel, ThreadChannel } from "discord.js";
 import { config } from "./config.ts";
 import { createLogger } from "./logger.ts";
 import { createDiscordClient } from "./bot/client.ts";
-import { handleMessage, handleThreadCreate, setSessionManager } from "./bot/handler.ts";
+import { handleMessage, handleThreadCreate, handleCommandInteraction, setSessionManager } from "./bot/handler.ts";
+import { registerCommands } from "./bot/commands.ts";
 import { sendToDiscord, sendSessionStartNotification, sendSessionEndNotification } from "./bot/responder.ts";
 import { handleInteraction, sendToolBlockedNotification, sendAskUser, clearPendingInteraction, setInteractionSessionManager } from "./bot/interactions.ts";
 import { SessionManager } from "./claude/session.ts";
@@ -71,6 +72,10 @@ async function main(): Promise<void> {
   sessionMgr.registerSession(mainSessionInfo);
 
   // 4. イベントハンドラ登録
+  discord.onReady(async () => {
+    await registerCommands(discord!.client);
+  });
+
   discord.onMessage((message) => {
     void handleMessage(message);
   });

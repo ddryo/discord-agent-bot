@@ -18,12 +18,14 @@ export type ThreadCreateHandler = (
   thread: ThreadChannel,
   newlyCreated: boolean,
 ) => void | Promise<void>;
+export type ReadyHandler = () => void | Promise<void>;
 
 export interface DiscordClient {
   client: Client;
   onMessage(handler: MessageHandler): void;
   onInteraction(handler: InteractionHandler): void;
   onThreadCreate(handler: ThreadCreateHandler): void;
+  onReady(handler: ReadyHandler): void;
   login(): Promise<void>;
   destroy(): Promise<void>;
 }
@@ -40,9 +42,15 @@ export function createDiscordClient(): DiscordClient {
   const messageHandlers: MessageHandler[] = [];
   const interactionHandlers: InteractionHandler[] = [];
   const threadCreateHandlers: ThreadCreateHandler[] = [];
+  const readyHandlers: ReadyHandler[] = [];
 
   client.once("ready", () => {
     logger.info(`Bot logged in as ${client.user?.tag ?? "unknown"}`);
+    for (const handler of readyHandlers) {
+      void Promise.resolve(handler()).catch((err: unknown) => {
+        logger.error(`ready handler error: ${String(err)}`);
+      });
+    }
   });
 
   client.on("messageCreate", (message) => {
@@ -79,6 +87,9 @@ export function createDiscordClient(): DiscordClient {
     },
     onThreadCreate(handler: ThreadCreateHandler) {
       threadCreateHandlers.push(handler);
+    },
+    onReady(handler: ReadyHandler) {
+      readyHandlers.push(handler);
     },
     async login() {
       await client.login(config.discordBotToken);

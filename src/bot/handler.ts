@@ -1,6 +1,6 @@
 import { stat } from "fs/promises";
 import { resolve } from "path";
-import type { Message, TextChannel, ThreadChannel } from "discord.js";
+import type { Message, TextChannel, ThreadChannel, ChatInputCommandInteraction } from "discord.js";
 import { EmbedBuilder } from "discord.js";
 import { config, expandTilde, isAuthorizedUser } from "../config.ts";
 import { createLogger } from "../logger.ts";
@@ -14,7 +14,7 @@ const logger = createLogger("bot:handler");
 const MAIN_SESSION_NAME = "main";
 
 /** 対応するコマンド一覧 */
-const SUPPORTED_COMMANDS = ["clear", "cost", "status", "tools"];
+const SUPPORTED_COMMANDS = ["clear", "status", "tools"];
 
 /** SessionManager への参照（index.ts から setSessionManager で設定） */
 let sessionManager: SessionManager | null = null;
@@ -374,4 +374,108 @@ export async function handleThreadCreate(
   await sendSessionStartNotification(thread, sessionName, resolvedPath);
 
   logger.info(`Thread session registered: ${sessionName} (cwd: ${resolvedPath})`);
+}
+
+/**
+ * Application Command（スラッシュコマンド）のインタラクションを処理する。
+ */
+export async function handleCommandInteraction(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  if (!isAuthorizedUser(interaction.user.id)) {
+    await interaction.reply({ content: "この操作を行う権限がありません。", flags: 64 });
+    return;
+  }
+
+  if (!sessionManager) {
+    await interaction.reply({ content: "エラー: SessionManager が初期化されていません。", flags: 64 });
+    return;
+  }
+
+  // セッション解決: スレッド内 → スレッドセッション / メインチャンネル → main
+  const channel = interaction.channel;
+  let sessionName = MAIN_SESSION_NAME;
+  if (channel?.isThread()) {
+    const session = sessionManager.getSessionByThreadId(channel.id);
+    if (session) {
+      sessionName = session.name;
+    }
+  }
+
+  const commandName = interaction.commandName;
+  logger.info(`Slash command: /${commandName} (session: ${sessionName})`);
+
+  if (commandName === "clear") {
+    sessionManager.clearSession(sessionName);
+
+    const embed = new EmbedBuilder()
+      .setDescription("--- Context Cleared ---")
+      .setColor(0x5865f2)
+      .setTimestamp();
+
+    await interaction.reply({ embeds: [embed] });
+    return;
+  }
+
+  if (commandName === "status") {
+    const session = sessionManager.getSession(sessionName);
+    const embed = new EmbedBuilder()
+      .setTitle("Session Status")
+      .setColor(0x5865f2)
+      .setTimestamp();
+
+    if (session) {
+      embed.addFields(
+        { name: "Session", value: session.name, inline: true },
+        { name: "State", value: session.state, inline: true },
+        { name: "CWD", value: `\`${session.cwd}\``, inline: false },
+        { name: "Claude Session ID", value: session.claudeSessionId ?? "(none)", inline: false },
+      );
+    } else {
+      embed.setDescription("セッションが見つかりません。");
+    }
+
+    await interaction.reply({ embeds: [embed] });
+    return;
+  }
+
+  if (commandName === "tools") {
+    const subcommand = interaction.options.getSubcommand();
+
+    if (subcommand === "clear") {
+      sessionManager.clearAllowedTools(sessionName);
+
+      const embed = new EmbedBuilder()
+        .setDescription("動的ツール許可をクリアしました。")
+        .setColor(0x5865f2)
+        .setTimestamp();
+
+      await interaction.reply({ embeds: [embed] });
+      return;
+    }
+
+    // /tools list: 許可リスト表示
+    const staticTools = config.allowedTools;
+    const dynamicTools = sessionManager.getAllowedTools(sessionName);
+
+    const embed = new EmbedBuilder()
+      .setTitle("Allowed Tools")
+      .setColor(0x5865f2)
+      .setTimestamp();
+
+    embed.addFields({
+      name: "Static (ALLOWED_TOOLS)",
+      value: staticTools.length > 0 ? staticTools.map((t) => `\`${t}\``).join(", ") : "(none)",
+    });
+
+    embed.addFields({
+      name: "Dynamic (session)",
+      value: dynamicTools.length > 0 ? dynamicTools.map((t) => `\`${t}\``).join(", ") : "(none)",
+    });
+
+    embed.setFooter({ text: "/tools clear で動的許可をクリア" });
+
+    await interaction.reply({ embeds: [embed] });
+    return;
+  }
 }
