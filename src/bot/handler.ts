@@ -8,6 +8,7 @@ import { createSession, hasSession, killSession, sendInput } from "../tmux/manag
 import { sessionStore } from "../sessions/store.ts";
 import type { OutputWatcher } from "../tmux/watcher.ts";
 import { getPendingInteraction, clearPendingInteraction, handleAskUserTextResponse } from "./interactions.ts";
+import { sendSessionStartNotification, sendSessionEndNotification } from "./responder.ts";
 
 const logger = createLogger("bot:handler");
 
@@ -229,8 +230,9 @@ async function handleExitCommand(
     watcher.unwatch(sessionName);
   }
 
-  // 終了メッセージを Discord に投稿
+  // 終了通知を Discord に投稿（Embed）
   const embed = new EmbedBuilder()
+    .setTitle("Session Ended")
     .setDescription("セッションを終了しました。")
     .setColor(0xed4245)
     .setTimestamp();
@@ -336,10 +338,14 @@ export async function handleThreadCreate(
   // OutputWatcher で監視開始
   watcher.watch(sessionName);
 
-  // 起動完了メッセージ
-  await thread.send(
-    `セッションを起動しました。\n作業ディレクトリ: \`${resolvedPath}\``,
-  );
+  // 起動完了通知（Embed）
+  const startEmbed = new EmbedBuilder()
+    .setTitle("Session Started")
+    .setDescription(`セッションを起動しました。`)
+    .addFields({ name: "cwd", value: `\`${resolvedPath}\`` })
+    .setColor(0x57f287)
+    .setTimestamp();
+  await thread.send({ embeds: [startEmbed] });
 
   logger.info(`Thread session started: ${sessionName} (cwd: ${resolvedPath})`);
 }

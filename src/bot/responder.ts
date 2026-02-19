@@ -1,4 +1,5 @@
 import type { TextChannel, ThreadChannel } from "discord.js";
+import { EmbedBuilder } from "discord.js";
 import { createLogger } from "../logger.ts";
 
 const logger = createLogger("bot:responder");
@@ -176,4 +177,58 @@ function findLastOpenFenceLang(text: string): string {
   }
 
   return openLang;
+}
+
+/**
+ * セッション起動通知を投稿する。
+ */
+export async function sendSessionStartNotification(
+  channel: TextChannel | ThreadChannel,
+  sessionName: string,
+  cwd: string,
+): Promise<void> {
+  const embed = new EmbedBuilder()
+    .setTitle("Session Started")
+    .setDescription(`セッション \`${sessionName}\` を起動しました。`)
+    .addFields({ name: "Working Directory", value: `\`${cwd}\`` })
+    .setColor(0x57f287)
+    .setTimestamp();
+
+  try {
+    await channel.send({ embeds: [embed] });
+  } catch (error) {
+    logger.error(`Failed to send session start notification: ${String(error)}`);
+  }
+}
+
+/**
+ * セッション終了通知を投稿する。
+ */
+export async function sendSessionEndNotification(
+  channel: TextChannel | ThreadChannel,
+  reason: "normal" | "error" | "exit",
+): Promise<void> {
+  const descriptions: Record<string, string> = {
+    normal: "セッションが正常に終了しました。",
+    error: "セッションが予期せず終了しました。",
+    exit: "セッションを終了しました。",
+  };
+
+  const colors: Record<string, number> = {
+    normal: 0x5865f2,
+    error: 0xed4245,
+    exit: 0xfee75c,
+  };
+
+  const embed = new EmbedBuilder()
+    .setTitle("Session Ended")
+    .setDescription(descriptions[reason] ?? descriptions["normal"]!)
+    .setColor(colors[reason] ?? colors["normal"]!)
+    .setTimestamp();
+
+  try {
+    await channel.send({ embeds: [embed] });
+  } catch (error) {
+    logger.error(`Failed to send session end notification: ${String(error)}`);
+  }
 }

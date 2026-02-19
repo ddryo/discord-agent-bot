@@ -107,8 +107,15 @@ async function main(): Promise<void> {
           }
         }
         if (event.type === "session_end") {
-          // セッション終了: クリーンアップ（通知は T-M4-6 で実装）
+          // セッション終了通知 + クリーンアップ
           const session = sessionStore.getSessionByName(sessionName);
+          const endEmbed = new EmbedBuilder()
+            .setTitle("Session Ended")
+            .setDescription("セッションが終了しました。")
+            .setColor(0xed4245)
+            .setTimestamp();
+          await target.send({ embeds: [endEmbed] });
+
           if (session) {
             sessionStore.removeSession(session.threadId);
           }
@@ -157,6 +164,20 @@ async function main(): Promise<void> {
 
   // 9. メインセッションの監視開始（ログイン完了後に開始）
   watcher.watch(MAIN_SESSION_NAME);
+
+  // 9.5. メインセッション起動通知
+  const mainChannel = discord.client.channels.cache.get(
+    config.discordChannelId,
+  ) as TextChannel | undefined;
+  if (mainChannel) {
+    const startEmbed = new EmbedBuilder()
+      .setTitle("Session Started")
+      .setDescription("メインセッションを起動しました。")
+      .addFields({ name: "cwd", value: `\`${config.defaultCwd}\`` })
+      .setColor(0x57f287)
+      .setTimestamp();
+    await mainChannel.send({ embeds: [startEmbed] });
+  }
 
   // 10. グレースフルシャットダウン
   let isShuttingDown = false;
