@@ -103,11 +103,11 @@ async function handleToolApprovalButton(
     logger.info(`Tool approval: ${action} (choice=${choice}) for session ${sessionName}`);
   } catch (error) {
     logger.error(`Failed to send tool approval: ${String(error)}`);
+    // pending を復元して再試行可能にする
+    restorePending(sessionName, { type: "tool_approval", messageId: interaction.message.id });
     await interaction.reply({ content: "エラー: CLI への送信に失敗しました。再度お試しください。", flags: 64 });
     return;
   }
-
-  pendingInteractions.delete(sessionName);
 
   // ボタンを無効化してメッセージを更新
   const actionLabel = action === "approve" ? "Approved" : action === "always" ? "Always Allowed" : "Denied";
@@ -169,7 +169,10 @@ export async function sendAskUser(
       components.push(row);
     }
 
-    embed.setFooter({ text: "ボタンで選択するか、テキストメッセージで回答できます" });
+    const footerText = info.options.length > MAX_BUTTONS
+      ? `ボタンは先頭 ${MAX_BUTTONS} 件のみ表示。残りはテキストメッセージで番号を入力してください`
+      : "ボタンで選択するか、テキストメッセージで回答できます";
+    embed.setFooter({ text: footerText });
   } else {
     embed.setFooter({ text: "テキストメッセージで回答してください" });
   }
@@ -194,11 +197,10 @@ async function handleAskUserButton(
     logger.info(`AskUser: option ${optionIndex} selected for session ${sessionName}`);
   } catch (error) {
     logger.error(`Failed to send AskUser response: ${String(error)}`);
+    restorePending(sessionName, { type: "ask_user", messageId: interaction.message.id });
     await interaction.reply({ content: "エラー: CLI への送信に失敗しました。再度お試しください。", flags: 64 });
     return;
   }
-
-  pendingInteractions.delete(sessionName);
 
   // ボタンを無効化してメッセージを更新
   await interaction.update({
@@ -228,14 +230,21 @@ export async function handleAskUserTextResponse(
 }
 
 /**
- * interactionCreate イベントのハンドラ
+ * pending 状態を原子的に消費する（検証 + 即時削除）。
+ * 同時押下の競合を防ぐため、検証と削除を一括で行う。
+ * sendInput 失敗時は呼び出し側で restorePending() により復元する。
  */
-/**
- * pending 状態と messageId を検証し、stale なボタン操作を拒否する
- */
-function validatePending(sessionName: string, messageId: string, expectedType: PendingState["type"]): boolean {
+function consumePending(sessionName: string, messageId: string, expectedType: PendingState["type"]): PendingState | null {
   const pending = pendingInteractions.get(sessionName);
-  return pending !== undefined && pending.type === expectedType && pending.messageId === messageId;
+  if (!pending || pending.type !== expectedType || pending.messageId !== messageId) {
+    return null;
+  }
+  pendingInteractions.delete(sessionName);
+  return pending;
+}
+
+function restorePending(sessionName: string, state: PendingState): void {
+  pendingInteractions.set(sessionName, state);
 }
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
@@ -247,7 +256,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
   // ツール許可ボタンの処理
   if (customId.startsWith("tool_approve:")) {
     const sessionName = customId.slice("tool_approve:".length);
-    if (!validatePending(sessionName, messageId, "tool_approval")) {
+    if (!consumePending(sessionName, messageId, "tool_approval")) {
       await interaction.reply({ content: "この操作は既に処理済みです。", flags: 64 });
       return;
     }
@@ -256,7 +265,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
   }
   if (customId.startsWith("tool_always:")) {
     const sessionName = customId.slice("tool_always:".length);
-    if (!validatePending(sessionName, messageId, "tool_approval")) {
+    if (!consumePending(sessionName, messageId, "tool_approval")) {
       await interaction.reply({ content: "この操作は既に処理済みです。", flags: 64 });
       return;
     }
@@ -265,7 +274,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
   }
   if (customId.startsWith("tool_deny:")) {
     const sessionName = customId.slice("tool_deny:".length);
-    if (!validatePending(sessionName, messageId, "tool_approval")) {
+    if (!consumePending(sessionName, messageId, "tool_approval")) {
       await interaction.reply({ content: "この操作は既に処理済みです。", flags: 64 });
       return;
     }
@@ -278,7 +287,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
   if (askUserMatch) {
     const optionIndex = parseInt(askUserMatch[1]!, 10);
     const sessionName = askUserMatch[2]!;
-    if (!validatePending(sessionName, messageId, "ask_user")) {
+    if (!consumePending(sessionName, messageId, "ask_user")) {
       await interaction.reply({ content: "この操作は既に処理済みです。", flags: 64 });
       return;
     }
