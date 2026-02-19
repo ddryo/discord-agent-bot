@@ -18,6 +18,7 @@ export interface SessionManagerEvents {
   toolBlocked: [sessionName: string, toolName: string, toolInput: Record<string, unknown>, errorContent: string];
   askUser: [sessionName: string, question: string, options: string[]];
   error: [sessionName: string, message: string];
+  idle: [sessionName: string];
 }
 
 /**
@@ -125,6 +126,11 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
       });
 
       proc.on("toolBlocked", (toolName, toolInput, errorContent) => {
+        // toolBlocked の前に蓄積テキストを先に配信（Discord で通知より前にテキストを表示するため）
+        if (entry.textBuffer.trim()) {
+          this.emit("response", name, entry.textBuffer, { inputTokens: 0, outputTokens: 0 });
+          entry.textBuffer = "";
+        }
         this.emit("toolBlocked", name, toolName, toolInput, errorContent);
       });
 
@@ -164,6 +170,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
         }
         // exitCode !== 0 && !hasContent && !isRetry → sendMessage 側でリトライ判定
 
+        this.emit("idle", name);
         resolve({ resultReceived: hasContent, exitCode });
       });
 
@@ -213,6 +220,32 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
     const entry = this.sessions.get(name);
     if (!entry) return false;
     return entry.info.state === "running";
+  }
+
+  /**
+   * セッションが idle になるまで待機する。
+   * 既に idle の場合は即座に resolve する。
+   */
+  waitForIdle(name: string, timeoutMs = 30000): Promise<void> {
+    if (!this.isBusy(name)) return Promise.resolve();
+
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.off("idle", onIdle);
+        logger.warn(`waitForIdle timed out for session: ${name}`);
+        resolve();
+      }, timeoutMs);
+
+      const onIdle = (sessionName: string) => {
+        if (sessionName === name) {
+          clearTimeout(timer);
+          this.off("idle", onIdle);
+          resolve();
+        }
+      };
+
+      this.on("idle", onIdle);
+    });
   }
 
   /**

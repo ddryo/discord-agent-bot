@@ -171,14 +171,15 @@ function buildDisabledRow(sessionName: string): ActionRowBuilder<ButtonBuilder> 
 }
 
 /**
- * ボタン応答後に Claude セッションへ自動再送信する
+ * ボタン応答後に Claude セッションへ自動再送信する。
+ * セッションが busy の場合は idle になるまで待機してから再送信する。
  */
 async function autoResendToSession(sessionName: string, text: string): Promise<void> {
   if (!sessionManager) return;
 
   if (sessionManager.isBusy(sessionName)) {
-    logger.warn(`Session is busy, skipping auto-resend: ${sessionName}`);
-    return;
+    logger.info(`Session is busy, waiting for idle before resend: ${sessionName}`);
+    await sessionManager.waitForIdle(sessionName);
   }
 
   try {
