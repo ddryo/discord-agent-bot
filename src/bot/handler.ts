@@ -1,15 +1,30 @@
 import { stat } from "fs/promises";
 import { resolve } from "path";
 import type { Message, ThreadChannel } from "discord.js";
+import { EmbedBuilder } from "discord.js";
 import { config, expandTilde } from "../config.ts";
 import { createLogger } from "../logger.ts";
-import { createSession, hasSession, sendInput } from "../tmux/manager.ts";
+import { createSession, hasSession, killSession, sendInput } from "../tmux/manager.ts";
 import { sessionStore } from "../sessions/store.ts";
 import type { OutputWatcher } from "../tmux/watcher.ts";
 
 const logger = createLogger("bot:handler");
 
 const MAIN_SESSION_NAME = "main";
+
+/** 対応する CLI コマンド一覧 */
+const SUPPORTED_COMMANDS = ["clear", "compact", "cost", "context", "status", "model"];
+
+/** watcher への参照（index.ts から setWatcher で設定） */
+let watcher: OutputWatcher | null = null;
+
+/**
+ * OutputWatcher の参照を設定する。
+ * index.ts から呼び出し、handler 内で watcher.unwatch() 等を利用可能にする。
+ */
+export function setWatcher(w: OutputWatcher): void {
+  watcher = w;
+}
 
 /** パストラバーサル防止: システムディレクトリへのセッション作成をブロック */
 const BLOCKED_PATHS = ["/", "/etc", "/sys", "/proc", "/dev", "/boot", "/sbin", "/bin", "/usr/sbin", "/usr/bin"];
