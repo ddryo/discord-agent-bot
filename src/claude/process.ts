@@ -124,11 +124,13 @@ export class ClaudeProcess extends EventEmitter<ClaudeProcessEvents> {
     stdin.end();
 
     // stdout/stderr のパースを開始
-    void this.readStdout();
-    void this.readStderr();
+    const stdoutDone = this.readStdout();
+    const stderrDone = this.readStderr();
 
-    // プロセス終了時
-    void this.proc.exited.then((exitCode) => {
+    // stdout/stderr の読み取り完了を待ってから exit を通知（レースコンディション防止）
+    void this.proc.exited.then(async (exitCode) => {
+      await stdoutDone;
+      await stderrDone;
       this.emit("exit", exitCode);
     });
   }

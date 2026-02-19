@@ -68,7 +68,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
         name,
         "セッションの再開に失敗したため、新しいセッションで再試行します。（以前の会話コンテキストはリセットされています）",
       );
-      await this.runProcess(entry, text);
+      await this.runProcess(entry, text, true);
     }
   }
 
@@ -84,6 +84,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
     const name = entry.info.name;
     entry.info.state = "running";
     entry.textBuffer = "";
+    const isResuming = !!entry.info.claudeSessionId;
 
     const allowedTools = [
       ...config.allowedTools,
@@ -100,10 +101,19 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
 
     return new Promise((resolve) => {
       let resultReceived = false;
+      let resultUsage = { inputTokens: 0, outputTokens: 0 };
 
       proc.on("system", (sessionId) => {
-        entry.info.claudeSessionId = sessionId;
-        logger.info(`Session ID acquired: ${name} → ${sessionId}`);
+        if (!isResuming) {
+          // 新規セッション: system イベントからセッションIDを取得
+          entry.info.claudeSessionId = sessionId;
+          logger.info(`Session ID acquired: ${name} → ${sessionId}`);
+        } else {
+          // resume 時: system イベントのIDが実際のセッションIDと異なる場合があるため無視
+          logger.debug(
+            `Ignoring system session_id during resume: ${sessionId} (keeping ${entry.info.claudeSessionId})`,
+          );
+        }
       });
 
       proc.on("text", (chunk) => {
@@ -124,15 +134,8 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
 
       proc.on("result", (_fullText, usage) => {
         resultReceived = true;
-        entry.info.usage.inputTokens += usage.inputTokens;
-        entry.info.usage.outputTokens += usage.outputTokens;
-
-        const responseText = entry.textBuffer;
-        entry.info.state = "idle";
-        entry.process = null;
-
-        this.emit("response", name, responseText, usage);
-        resolve({ resultReceived: true, exitCode: 0 });
+        resultUsage = usage;
+        // resolve は exit イベントで行う（exit code を確認するため）
       });
 
       proc.on("error", (message) => {
@@ -143,15 +146,25 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
         entry.info.state = "idle";
         entry.process = null;
 
-        if (exitCode !== 0 && resultReceived) {
-          // result は受信済みだが異常終了 → エラー通知
+        const hasContent = resultReceived && entry.textBuffer.trim() !== "";
+
+        if (hasContent) {
+          // テキストが存在する場合はレスポンスを配信
+          entry.info.usage.inputTokens += resultUsage.inputTokens;
+          entry.info.usage.outputTokens += resultUsage.outputTokens;
+          this.emit("response", name, entry.textBuffer, resultUsage);
+        }
+
+        if (exitCode !== 0 && hasContent) {
+          // レスポンス配信済みだがプロセスが異常終了
           this.emit("error", name, `Process exited with code ${exitCode}`);
-        } else if (exitCode !== 0 && !resultReceived && isRetry) {
-          // リトライ後も失敗 → エラー通知
+        } else if (exitCode !== 0 && !hasContent && isRetry) {
+          // リトライ後もコンテンツなしで失敗
           this.emit("error", name, `Process exited with code ${exitCode}`);
         }
-        // !resultReceived && !isRetry の場合は sendMessage 側でリトライ判定するため抑制
-        resolve({ resultReceived, exitCode });
+        // exitCode !== 0 && !hasContent && !isRetry → sendMessage 側でリトライ判定
+
+        resolve({ resultReceived: hasContent, exitCode });
       });
 
       proc.run(text);
