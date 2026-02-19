@@ -18,6 +18,10 @@ const MAIN_SESSION_NAME = "main";
 async function main(): Promise<void> {
   logger.info("Starting discord-agent-bot...");
 
+  // 0. 起動時ヘルスチェック
+  const versions = await checkDependencies();
+  logger.info(`Dependencies: tmux=${versions.tmux}, claude=${versions.claude}`);
+
   // 1. Discord クライアント初期化
   const discord = createDiscordClient();
 
