@@ -43,6 +43,12 @@ export async function handleMessage(message: Message): Promise<void> {
   // Bot 自身のメッセージは無視
   if (message.author.bot) return;
 
+  // 操作ユーザー制限チェック
+  if (!isAuthorizedUser(message.author.id)) {
+    logger.debug(`Unauthorized user: ${message.author.tag} (${message.author.id})`);
+    return;
+  }
+
   // スレッド内メッセージの振り分け
   if (message.channel.isThread()) {
     await handleThreadMessage(message);
@@ -99,6 +105,9 @@ async function handleThreadMessage(message: Message): Promise<void> {
 
   // 対象チャンネルの子スレッドかどうかを確認
   if (thread.parentId !== config.discordChannelId) return;
+
+  // 操作ユーザー制限チェック
+  if (!isAuthorizedUser(message.author.id)) return;
 
   const text = message.content.trim();
   if (!text) return;
