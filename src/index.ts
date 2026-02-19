@@ -1,10 +1,10 @@
-import { type TextChannel, type ThreadChannel, EmbedBuilder } from "discord.js";
+import type { TextChannel, ThreadChannel } from "discord.js";
 import { config } from "./config.ts";
 import { createLogger } from "./logger.ts";
 import { sessionStore } from "./sessions/store.ts";
 import { createDiscordClient } from "./bot/client.ts";
 import { handleMessage, handleThreadCreate, setWatcher } from "./bot/handler.ts";
-import { sendToDiscord } from "./bot/responder.ts";
+import { sendToDiscord, sendSessionStartNotification, sendSessionEndNotification } from "./bot/responder.ts";
 import { handleInteraction, sendToolApproval, sendAskUser, getPendingInteraction, clearPendingInteraction } from "./bot/interactions.ts";
 import type { ToolApprovalInfo, AskUserInfo } from "./types.ts";
 import { createSession, hasSession, killSession, listSessions, checkDependencies } from "./tmux/manager.ts";
@@ -109,12 +109,7 @@ async function main(): Promise<void> {
         if (event.type === "session_end") {
           // セッション終了通知 + クリーンアップ
           const session = sessionStore.getSessionByName(sessionName);
-          const endEmbed = new EmbedBuilder()
-            .setTitle("Session Ended")
-            .setDescription("セッションが終了しました。")
-            .setColor(0xed4245)
-            .setTimestamp();
-          await target.send({ embeds: [endEmbed] });
+          await sendSessionEndNotification(target, "normal");
 
           if (session) {
             sessionStore.removeSession(session.threadId);
@@ -123,7 +118,6 @@ async function main(): Promise<void> {
           clearPendingInteraction(sessionName);
           logger.info(`Session ended: ${sessionName}`);
         }
-        // TODO(M4): error → エラー通知
       }
     })();
   });
@@ -146,11 +140,7 @@ async function main(): Promise<void> {
       }
 
       if (target) {
-        const embed = new EmbedBuilder()
-          .setTitle("Session Error")
-          .setDescription("セッションが予期せず終了しました。")
-          .setColor(0xed4245);
-        await target.send({ embeds: [embed] });
+        await sendSessionEndNotification(target, "error");
       }
 
       // クリーンアップ
@@ -170,13 +160,7 @@ async function main(): Promise<void> {
     config.discordChannelId,
   ) as TextChannel | undefined;
   if (mainChannel) {
-    const startEmbed = new EmbedBuilder()
-      .setTitle("Session Started")
-      .setDescription("メインセッションを起動しました。")
-      .addFields({ name: "cwd", value: `\`${config.defaultCwd}\`` })
-      .setColor(0x57f287)
-      .setTimestamp();
-    await mainChannel.send({ embeds: [startEmbed] });
+    await sendSessionStartNotification(mainChannel, MAIN_SESSION_NAME, config.defaultCwd);
   }
 
   // 10. グレースフルシャットダウン

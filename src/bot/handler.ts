@@ -1,6 +1,6 @@
 import { stat } from "fs/promises";
 import { resolve } from "path";
-import type { Message, ThreadChannel } from "discord.js";
+import type { Message, TextChannel, ThreadChannel } from "discord.js";
 import { EmbedBuilder } from "discord.js";
 import { config, expandTilde } from "../config.ts";
 import { createLogger } from "../logger.ts";
@@ -230,14 +230,8 @@ async function handleExitCommand(
     watcher.unwatch(sessionName);
   }
 
-  // 終了通知を Discord に投稿（Embed）
-  const embed = new EmbedBuilder()
-    .setTitle("Session Ended")
-    .setDescription("セッションを終了しました。")
-    .setColor(0xed4245)
-    .setTimestamp();
-
-  await message.reply({ embeds: [embed] });
+  // 終了通知を Discord に投稿
+  await sendSessionEndNotification(message.channel as TextChannel | ThreadChannel, "exit");
 }
 
 /**
@@ -338,14 +332,8 @@ export async function handleThreadCreate(
   // OutputWatcher で監視開始
   watcher.watch(sessionName);
 
-  // 起動完了通知（Embed）
-  const startEmbed = new EmbedBuilder()
-    .setTitle("Session Started")
-    .setDescription(`セッションを起動しました。`)
-    .addFields({ name: "cwd", value: `\`${resolvedPath}\`` })
-    .setColor(0x57f287)
-    .setTimestamp();
-  await thread.send({ embeds: [startEmbed] });
+  // 起動完了通知
+  await sendSessionStartNotification(thread, sessionName, resolvedPath);
 
   logger.info(`Thread session started: ${sessionName} (cwd: ${resolvedPath})`);
 }
