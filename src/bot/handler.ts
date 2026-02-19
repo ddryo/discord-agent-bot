@@ -2,7 +2,7 @@ import { stat } from "fs/promises";
 import { resolve } from "path";
 import type { Message, TextChannel, ThreadChannel } from "discord.js";
 import { EmbedBuilder } from "discord.js";
-import { config, expandTilde } from "../config.ts";
+import { config, expandTilde, isAuthorizedUser } from "../config.ts";
 import { createLogger } from "../logger.ts";
 import { createSession, hasSession, killSession, sendInput } from "../tmux/manager.ts";
 import { sessionStore } from "../sessions/store.ts";
@@ -26,15 +26,6 @@ let watcher: OutputWatcher | null = null;
  */
 export function setWatcher(w: OutputWatcher): void {
   watcher = w;
-}
-
-/**
- * ユーザーが操作を許可されているか確認する。
- * DISCORD_USER_ID 未設定時は全員許可。
- */
-export function isAuthorizedUser(userId: string): boolean {
-  if (!config.discordUserId) return true;
-  return userId === config.discordUserId;
 }
 
 /** パストラバーサル防止: システムディレクトリへのセッション作成をブロック */

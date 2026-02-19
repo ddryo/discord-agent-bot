@@ -44,3 +44,12 @@ function loadConfig(): Config {
 }
 
 export const config = loadConfig();
+
+/**
+ * ユーザーが操作を許可されているか確認する。
+ * DISCORD_USER_ID 未設定時は全員許可。
+ */
+export function isAuthorizedUser(userId: string): boolean {
+  if (!config.discordUserId) return true;
+  return userId === config.discordUserId;
+}

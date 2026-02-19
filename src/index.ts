@@ -29,19 +29,23 @@ async function main(): Promise<void> {
 
     logger.info(`Received ${signal}, shutting down...`);
 
-    // 1. OutputWatcher の全監視を停止
-    watcher?.unwatchAll();
+    try {
+      // 1. OutputWatcher の全監視を停止
+      watcher?.unwatchAll();
 
-    // 2. 全 tmux セッション（ccbot- プレフィックス）を killSession
-    const sessions = await listSessions();
-    for (const fullName of sessions) {
-      const name = fullName.replace(/^ccbot-/, "");
-      await killSession(name);
-    }
+      // 2. 全 tmux セッション（ccbot- プレフィックス）を killSession
+      const sessions = await listSessions();
+      for (const fullName of sessions) {
+        const name = fullName.replace(/^ccbot-/, "");
+        await killSession(name);
+      }
 
-    // 3. Discord クライアントの切断
-    if (discord) {
-      await discord.destroy();
+      // 3. Discord クライアントの切断
+      if (discord) {
+        await discord.destroy();
+      }
+    } catch (error) {
+      logger.error(`Error during shutdown: ${String(error)}`);
     }
 
     logger.info("Shutdown complete");

@@ -11,14 +11,9 @@ import {
 import type { ToolApprovalInfo, AskUserInfo } from "../types.ts";
 import { sendInput } from "../tmux/manager.ts";
 import { createLogger } from "../logger.ts";
-import { config } from "../config.ts";
+import { isAuthorizedUser } from "../config.ts";
 
 const logger = createLogger("bot:interactions");
-
-function isAuthorizedUser(userId: string): boolean {
-  if (!config.discordUserId) return true;
-  return userId === config.discordUserId;
-}
 
 /** Discord コンポーネント制限: 最大 5 ActionRow × 5 ボタン */
 const MAX_BUTTONS = 25;
