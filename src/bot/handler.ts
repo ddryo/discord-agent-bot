@@ -1,7 +1,11 @@
-import type { Message } from "discord.js";
-import { config } from "../config.ts";
+import { existsSync } from "fs";
+import { resolve } from "path";
+import type { Message, ThreadChannel } from "discord.js";
+import { config, expandTilde } from "../config.ts";
 import { createLogger } from "../logger.ts";
 import { createSession, hasSession, sendInput } from "../tmux/manager.ts";
+import { sessionStore } from "../sessions/store.ts";
+import type { OutputWatcher } from "../tmux/watcher.ts";
 
 const logger = createLogger("bot:handler");
 
@@ -31,4 +35,70 @@ export async function handleMessage(message: Message): Promise<void> {
 
   // Claude CLI にメッセージを送信
   await sendInput(MAIN_SESSION_NAME, text);
+}
+
+/**
+ * スレッド作成イベントのハンドラ。
+ * スレッドタイトルを cwd として新規 tmux セッションを起動する。
+ */
+export async function handleThreadCreate(
+  thread: ThreadChannel,
+  newlyCreated: boolean,
+  watcher: OutputWatcher,
+): Promise<void> {
+  // 新規作成でない場合は無視（Bot 再起動時のキャッシュ読み込み等）
+  if (!newlyCreated) return;
+
+  // 対象チャンネルの子スレッドかどうかを確認
+  if (thread.parentId !== config.discordChannelId) return;
+
+  const threadId = thread.id;
+  const rawPath = thread.name;
+
+  logger.info(`Thread created: ${threadId} (title: "${rawPath}")`);
+
+  // スレッドタイトルをパスとして解釈
+  const expandedPath = expandTilde(rawPath);
+  const resolvedPath = resolve(expandedPath);
+
+  // パスの存在チェック
+  if (!existsSync(resolvedPath)) {
+    logger.warn(`Path does not exist: ${resolvedPath}`);
+    await thread.send(
+      `エラー: パス \`${rawPath}\` は存在しません。有効なディレクトリパスをスレッドタイトルに指定してください。`,
+    );
+    return;
+  }
+
+  // セッション名: ccbot-{threadId}
+  const sessionName = threadId;
+
+  // tmux セッション作成
+  try {
+    await createSession(sessionName, resolvedPath);
+  } catch (error) {
+    logger.error(`Failed to create session for thread ${threadId}: ${String(error)}`);
+    await thread.send(
+      `エラー: セッションの作成に失敗しました。\n\`${String(error)}\``,
+    );
+    return;
+  }
+
+  // SessionStore に登録
+  sessionStore.registerSession(threadId, {
+    name: sessionName,
+    cwd: resolvedPath,
+    threadId,
+    isMain: false,
+  });
+
+  // OutputWatcher で監視開始
+  watcher.watch(sessionName);
+
+  // 起動完了メッセージ
+  await thread.send(
+    `セッションを起動しました。\n作業ディレクトリ: \`${resolvedPath}\``,
+  );
+
+  logger.info(`Thread session started: ${sessionName} (cwd: ${resolvedPath})`);
 }

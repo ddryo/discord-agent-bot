@@ -27,6 +27,15 @@ export class SessionStore {
     }
   }
 
+  getSessionByName(sessionName: string): TmuxSessionInfo | undefined {
+    for (const info of this.sessions.values()) {
+      if (info.name === sessionName) {
+        return info;
+      }
+    }
+    return undefined;
+  }
+
   getAllSessions(): TmuxSessionInfo[] {
     return [...this.sessions.values()];
   }

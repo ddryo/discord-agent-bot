@@ -1,9 +1,9 @@
-import { type TextChannel } from "discord.js";
+import { type TextChannel, type ThreadChannel } from "discord.js";
 import { config } from "./config.ts";
 import { createLogger } from "./logger.ts";
 import { sessionStore } from "./sessions/store.ts";
 import { createDiscordClient } from "./bot/client.ts";
-import { handleMessage } from "./bot/handler.ts";
+import { handleMessage, handleThreadCreate } from "./bot/handler.ts";
 import { sendToDiscord } from "./bot/responder.ts";
 import { createSession, hasSession, killSession } from "./tmux/manager.ts";
 import { OutputWatcher } from "./tmux/watcher.ts";
@@ -43,19 +43,31 @@ async function main(): Promise<void> {
   // 5. OutputWatcher の "output" イベントで Discord に投稿
   watcher.on("output", (sessionName: string, events: OutputEvent[]) => {
     void (async () => {
-      // メインセッションの出力はメインチャンネルに投稿
-      const channel = discord.client.channels.cache.get(
-        config.discordChannelId,
-      ) as TextChannel | undefined;
+      let target: TextChannel | ThreadChannel | undefined;
 
-      if (!channel) {
-        logger.error("Target channel not found in cache");
+      if (sessionName === MAIN_SESSION_NAME) {
+        // メインセッション → メインチャンネル
+        target = discord.client.channels.cache.get(
+          config.discordChannelId,
+        ) as TextChannel | undefined;
+      } else {
+        // スレッドセッション → sessionName から threadId を特定
+        const session = sessionStore.getSessionByName(sessionName);
+        if (session?.threadId) {
+          target = discord.client.channels.cache.get(
+            session.threadId,
+          ) as ThreadChannel | undefined;
+        }
+      }
+
+      if (!target) {
+        logger.error(`Target channel not found for session: ${sessionName}`);
         return;
       }
 
       for (const event of events) {
         if (event.type === "text" && event.content) {
-          await sendToDiscord(channel, event.content);
+          await sendToDiscord(target, event.content);
         }
       }
     })();
@@ -66,7 +78,12 @@ async function main(): Promise<void> {
     void handleMessage(message);
   });
 
-  // 7. Discord クライアントにログイン
+  // 7. threadCreate でスレッドセッションを起動
+  discord.onThreadCreate((thread, newlyCreated) => {
+    void handleThreadCreate(thread, newlyCreated, watcher);
+  });
+
+  // 8. Discord クライアントにログイン
   await discord.login();
   logger.info("Bot is ready");
 }
