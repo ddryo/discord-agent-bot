@@ -10,6 +10,8 @@ interface SessionEntry {
   info: ClaudeSessionInfo;
   process: ClaudeProcess | null;
   textBuffer: string;
+  /** toolBlocked 発火済みフラグ（exit 時の謝罪テキスト配信を抑制する） */
+  toolBlockedPending: boolean;
 }
 
 export interface SessionManagerEvents {
@@ -37,7 +39,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
       logger.warn(`Session already registered: ${info.name}`);
       return;
     }
-    this.sessions.set(info.name, { info, process: null, textBuffer: "" });
+    this.sessions.set(info.name, { info, process: null, textBuffer: "", toolBlockedPending: false });
     logger.info(`Session registered: ${info.name} (cwd: ${info.cwd})`);
   }
 
@@ -86,6 +88,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
     const name = entry.info.name;
     entry.info.state = "running";
     entry.textBuffer = "";
+    entry.toolBlockedPending = false;
     this.emit("processing", name);
     const isResuming = !!entry.info.claudeSessionId;
 
@@ -131,6 +134,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
         // 蓄積テキストを toolBlocked イベントに含めて渡す（index.ts 側で先に配信）
         const bufferedText = entry.textBuffer;
         entry.textBuffer = "";
+        entry.toolBlockedPending = true;
         this.emit("toolBlocked", name, toolName, toolInput, errorContent, bufferedText);
       });
 
@@ -154,14 +158,17 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
 
         const hasContent = resultReceived && entry.textBuffer.trim() !== "";
 
-        if (hasContent) {
-          // テキストが存在する場合はレスポンスを配信
+        if (hasContent && !entry.toolBlockedPending) {
+          // テキストが存在し、toolBlocked 待ちでない場合はレスポンスを配信
+          // toolBlocked 後の謝罪テキストは抑制する
           entry.info.usage.inputTokens += resultUsage.inputTokens;
           entry.info.usage.outputTokens += resultUsage.outputTokens;
           this.emit("response", name, entry.textBuffer, resultUsage);
+        } else if (hasContent && entry.toolBlockedPending) {
+          logger.debug(`Suppressing post-toolBlocked response for session: ${name}`);
         }
 
-        if (exitCode !== 0 && hasContent) {
+        if (exitCode !== 0 && hasContent && !entry.toolBlockedPending) {
           // レスポンス配信済みだがプロセスが異常終了
           this.emit("error", name, `Process exited with code ${exitCode}`);
         } else if (exitCode !== 0 && !hasContent && isRetry) {
@@ -230,21 +237,27 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
     if (!this.isBusy(name)) return Promise.resolve();
 
     return new Promise((resolve) => {
-      const timer = setTimeout(() => {
+      let resolved = false;
+      const done = () => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
         this.off("idle", onIdle);
-        logger.warn(`waitForIdle timed out for session: ${name}`);
         resolve();
+      };
+
+      const timer = setTimeout(() => {
+        logger.warn(`waitForIdle timed out for session: ${name}`);
+        done();
       }, timeoutMs);
 
       const onIdle = (sessionName: string) => {
-        if (sessionName === name) {
-          clearTimeout(timer);
-          this.off("idle", onIdle);
-          resolve();
-        }
+        if (sessionName === name) done();
       };
 
+      // リスナーを先に登録してからチェック（idle イベント取りこぼし防止）
       this.on("idle", onIdle);
+      if (!this.isBusy(name)) done();
     });
   }
 

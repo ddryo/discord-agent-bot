@@ -174,18 +174,36 @@ function buildDisabledRow(sessionName: string): ActionRowBuilder<ButtonBuilder> 
  * ボタン応答後に Claude セッションへ自動再送信する。
  * セッションが busy の場合は idle になるまで待機してから再送信する。
  */
-async function autoResendToSession(sessionName: string, text: string): Promise<void> {
-  if (!sessionManager) return;
+async function autoResendToSession(
+  sessionName: string,
+  text: string,
+  feedbackChannel?: TextChannel | ThreadChannel | null,
+): Promise<void> {
+  if (!sessionManager) {
+    logger.error(`autoResendToSession: sessionManager is null`);
+    return;
+  }
+
+  logger.info(`autoResendToSession: start (session=${sessionName}, busy=${sessionManager.isBusy(sessionName)})`);
 
   if (sessionManager.isBusy(sessionName)) {
-    logger.info(`Session is busy, waiting for idle before resend: ${sessionName}`);
+    logger.info(`autoResendToSession: waiting for idle (session=${sessionName})`);
     await sessionManager.waitForIdle(sessionName);
+    logger.info(`autoResendToSession: idle reached (session=${sessionName})`);
   }
 
   try {
+    logger.info(`autoResendToSession: sending message to session ${sessionName}`);
     await sessionManager.sendMessage(sessionName, text);
+    logger.info(`autoResendToSession: message sent successfully (session=${sessionName})`);
   } catch (error) {
-    logger.error(`Failed to auto-resend after button action: ${String(error)}`);
+    const errorMsg = `ツール許可後の自動再送信に失敗: ${String(error)}`;
+    logger.error(`autoResendToSession: ${errorMsg}`);
+    if (feedbackChannel) {
+      await feedbackChannel.send(`**Error:** ${errorMsg}`).catch((e) =>
+        logger.error(`Failed to send error feedback to Discord: ${String(e)}`),
+      );
+    }
   }
 }
 
@@ -208,15 +226,23 @@ async function handleToolApproveButton(
   sessionManager.addAllowedTool(sessionName, pattern);
   logger.info(`Tool approved: ${pattern} for session ${sessionName}`);
 
+  // ボタン無効化 + メッセージ更新（await しない — Bun 環境で interaction webhook がハングするため）
   const disabledRow = buildDisabledRow(sessionName);
-
-  await interaction.update({
+  interaction.update({
     content: `**Approved: ${pattern}** by ${interaction.user.tag}`,
     components: [disabledRow],
+  }).catch((error) => {
+    logger.error(`interaction.update failed (approve): ${String(error)}`);
   });
 
-  // Claude に自動再送信してリトライ
-  await autoResendToSession(sessionName, `Approved: ${pattern}`);
+  // リアクションフィードバック
+  interaction.message.react("✅").catch((error) => {
+    logger.error(`react failed (approve): ${String(error)}`);
+  });
+
+  // Claude に自動再送信してリトライ（チャンネルをエラーフィードバック用に渡す）
+  const channel = interaction.channel as TextChannel | ThreadChannel | null;
+  await autoResendToSession(sessionName, `Approved: ${pattern}`, channel);
 }
 
 /**
@@ -229,13 +255,22 @@ async function handleToolDenyButton(
 ): Promise<void> {
   const disabledRow = buildDisabledRow(sessionName);
 
-  await interaction.update({
+  // ボタン無効化 + メッセージ更新（await しない — Bun 環境で interaction webhook がハングするため）
+  interaction.update({
     content: `**Denied: ${toolName}** by ${interaction.user.tag}`,
     components: [disabledRow],
+  }).catch((error) => {
+    logger.error(`interaction.update failed (deny): ${String(error)}`);
+  });
+
+  // リアクションフィードバック
+  interaction.message.react("🙅‍♂️").catch((error) => {
+    logger.error(`react failed (deny): ${String(error)}`);
   });
 
   // Claude に deny を通知して続行させる
-  await autoResendToSession(sessionName, `Denied: ${toolName}`);
+  const channel = interaction.channel as TextChannel | ThreadChannel | null;
+  await autoResendToSession(sessionName, `Denied: ${toolName}`, channel);
 }
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
@@ -256,6 +291,14 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
     return;
   }
 
+  try {
+    await handleButtonInteraction(interaction);
+  } catch (error) {
+    logger.error(`Unhandled error in button interaction: ${String(error)}`);
+  }
+}
+
+async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
   const customId = interaction.customId;
   const messageId = interaction.message.id;
 
