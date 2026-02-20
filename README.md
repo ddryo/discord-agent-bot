@@ -50,23 +50,26 @@ cp .env.example .env
 ```env
 # 必須
 DISCORD_BOT_TOKEN=your-bot-token
-DISCORD_CHANNEL_ID=your-channel-id
+DISCORD_CHANNEL_ID=your-channel-id      # Bot が監視するチャンネルのID
 
 # オプション
-DISCORD_USER_ID=your-discord-user-id    # 操作を許可するユーザー（未設定で全員許可）
+DISCORD_USER_ID=your-discord-user-id    # 操作を許可するユーザーID
 DEFAULT_CWD=~/Desktop                    # Claude Code のデフォルト作業ディレクトリ
 ALLOWED_TOOLS=Bash(ls:*),Read,Glob       # 事前許可するツール（カンマ区切り）
 ```
 
-`DISCORD_CHANNEL_ID` は Bot が監視するチャンネルの ID です。Discord の開発者モードを有効にしてチャンネルを右クリック → 「IDをコピー」で取得できます。
+`DISCORD_CHANNEL_ID`, `DISCORD_USER_ID`は、Discord の**開発者モードを有効**にしてチャンネル・ユーザーを右クリック → 「IDをコピー」で取得できます。
 
-### 4. 起動
+
+## 使い方
+
+
+### Bot 起動
 
 ```bash
 bun start
 ```
 
-## 使い方
 
 ### 基本操作
 
