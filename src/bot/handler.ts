@@ -14,7 +14,7 @@ const logger = createLogger("bot:handler");
 const MAIN_SESSION_NAME = "main";
 
 /** 対応するコマンド一覧 */
-const SUPPORTED_COMMANDS = ["clear", "status", "tools"];
+const SUPPORTED_COMMANDS = ["clear", "status", "tools", "new"];
 
 /** SessionManager への参照（index.ts から setSessionManager で設定） */
 let sessionManager: SessionManager | null = null;
