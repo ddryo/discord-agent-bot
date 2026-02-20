@@ -308,7 +308,7 @@ async function handleExitCommand(
 
 /**
  * スレッド作成イベントのハンドラ。
- * スレッドタイトルを cwd として新規セッションを登録する。
+ * 手動スレッド作成時に defaultCwd でセッションを起動する。
  */
 export async function handleThreadCreate(
   thread: ThreadChannel,
@@ -325,48 +325,20 @@ export async function handleThreadCreate(
 
   const threadId = thread.id;
 
-  // 重複セッション作成を防止
+  // /new 経由で既に登録済みの場合はスキップ（二重起動防止）
   if (sessionManager.getSessionByThreadId(threadId)) {
-    logger.warn(`Session already exists for thread: ${threadId}`);
+    logger.info(`Session already exists for thread: ${threadId}, skipping`);
     return;
   }
 
-  const rawPath = thread.name;
-  logger.info(`Thread created: ${threadId} (title: "${rawPath}")`);
+  logger.info(`Thread created: ${threadId} (title: "${thread.name}")`);
 
-  // パスの検証とフォールバック
-  let resolvedPath: string;
-  const expandedPath = expandTilde(rawPath);
-  const candidatePath = resolve(expandedPath);
-
-  if (BLOCKED_PATHS.includes(candidatePath)) {
-    logger.warn(`Blocked system path: ${candidatePath}, falling back to default`);
-    resolvedPath = config.defaultCwd;
-  } else {
-    let isValidDir = false;
-    try {
-      const stats = await stat(candidatePath);
-      isValidDir = stats.isDirectory();
-    } catch {
-      // パスが存在しない
-    }
-
-    if (isValidDir) {
-      resolvedPath = candidatePath;
-    } else {
-      logger.info(`Invalid path "${rawPath}", falling back to default: ${config.defaultCwd}`);
-      resolvedPath = config.defaultCwd;
-      await thread.send(
-        `パス \`${rawPath}\` が無効なため、デフォルトパス \`${config.defaultCwd}\` で開始します。`,
-      );
-    }
-  }
-
+  const cwd = config.defaultCwd;
   const sessionName = threadId;
 
   const info: ClaudeSessionInfo = {
     name: sessionName,
-    cwd: resolvedPath,
+    cwd,
     threadId,
     isMain: false,
     claudeSessionId: null,
@@ -377,10 +349,9 @@ export async function handleThreadCreate(
 
   sessionManager.registerSession(info);
 
-  // 起動完了通知
-  await sendSessionStartNotification(thread, sessionName, resolvedPath);
+  await sendSessionStartNotification(thread, sessionName, cwd);
 
-  logger.info(`Thread session registered: ${sessionName} (cwd: ${resolvedPath})`);
+  logger.info(`Thread session registered: ${sessionName} (cwd: ${cwd})`);
 }
 
 /**
