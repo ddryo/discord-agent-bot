@@ -1,7 +1,7 @@
 import { stat } from "fs/promises";
 import { resolve } from "path";
 import type { Message, TextChannel, ThreadChannel, ChatInputCommandInteraction } from "discord.js";
-import { EmbedBuilder } from "discord.js";
+import { ChannelType, EmbedBuilder } from "discord.js";
 import { config, expandTilde, isAuthorizedUser } from "../config.ts";
 import { createLogger } from "../logger.ts";
 import type { SessionManager } from "../claude/session.ts";
@@ -28,6 +28,12 @@ export function setSessionManager(sm: SessionManager): void {
 
 /** パストラバーサル防止: システムディレクトリへのセッション作成をブロック */
 const BLOCKED_PATHS = ["/", "/etc", "/sys", "/proc", "/dev", "/boot", "/sbin", "/bin", "/usr/sbin", "/usr/bin"];
+
+function isBlockedPath(candidatePath: string): boolean {
+  return BLOCKED_PATHS.some(
+    (blocked) => candidatePath === blocked || candidatePath.startsWith(`${blocked}/`),
+  );
+}
 
 export async function handleMessage(message: Message): Promise<void> {
   if (message.author.bot) return;
@@ -308,7 +314,7 @@ async function handleExitCommand(
 
 /**
  * スレッド作成イベントのハンドラ。
- * スレッドタイトルを cwd として新規セッションを登録する。
+ * 手動スレッド作成時に defaultCwd でセッションを起動する。
  */
 export async function handleThreadCreate(
   thread: ThreadChannel,
@@ -325,48 +331,20 @@ export async function handleThreadCreate(
 
   const threadId = thread.id;
 
-  // 重複セッション作成を防止
+  // /new 経由で既に登録済みの場合はスキップ（二重起動防止）
   if (sessionManager.getSessionByThreadId(threadId)) {
-    logger.warn(`Session already exists for thread: ${threadId}`);
+    logger.info(`Session already exists for thread: ${threadId}, skipping`);
     return;
   }
 
-  const rawPath = thread.name;
-  logger.info(`Thread created: ${threadId} (title: "${rawPath}")`);
+  logger.info(`Thread created: ${threadId} (title: "${thread.name}")`);
 
-  // パスの検証とフォールバック
-  let resolvedPath: string;
-  const expandedPath = expandTilde(rawPath);
-  const candidatePath = resolve(expandedPath);
-
-  if (BLOCKED_PATHS.includes(candidatePath)) {
-    logger.warn(`Blocked system path: ${candidatePath}, falling back to default`);
-    resolvedPath = config.defaultCwd;
-  } else {
-    let isValidDir = false;
-    try {
-      const stats = await stat(candidatePath);
-      isValidDir = stats.isDirectory();
-    } catch {
-      // パスが存在しない
-    }
-
-    if (isValidDir) {
-      resolvedPath = candidatePath;
-    } else {
-      logger.info(`Invalid path "${rawPath}", falling back to default: ${config.defaultCwd}`);
-      resolvedPath = config.defaultCwd;
-      await thread.send(
-        `パス \`${rawPath}\` が無効なため、デフォルトパス \`${config.defaultCwd}\` で開始します。`,
-      );
-    }
-  }
-
+  const cwd = config.defaultCwd;
   const sessionName = threadId;
 
   const info: ClaudeSessionInfo = {
     name: sessionName,
-    cwd: resolvedPath,
+    cwd,
     threadId,
     isMain: false,
     claudeSessionId: null,
@@ -377,10 +355,9 @@ export async function handleThreadCreate(
 
   sessionManager.registerSession(info);
 
-  // 起動完了通知
-  await sendSessionStartNotification(thread, sessionName, resolvedPath);
+  await sendSessionStartNotification(thread, sessionName, cwd);
 
-  logger.info(`Thread session registered: ${sessionName} (cwd: ${resolvedPath})`);
+  logger.info(`Thread session registered: ${sessionName} (cwd: ${cwd})`);
 }
 
 /**
@@ -484,5 +461,89 @@ export async function handleCommandInteraction(
 
     await interaction.reply({ embeds: [embed] });
     return;
+  }
+
+  if (commandName === "new") {
+    await handleNewCommand(interaction);
+    return;
+  }
+}
+
+async function handleNewCommand(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  if (!sessionManager) {
+    await interaction.reply({ content: "エラー: SessionManager が初期化されていません。", flags: 64 });
+    return;
+  }
+
+  const channel = interaction.channel;
+  if (!channel || channel.type !== ChannelType.GuildText) {
+    await interaction.reply({ content: "このコマンドはテキストチャンネルでのみ使用できます。", flags: 64 });
+    return;
+  }
+
+  const title = interaction.options.getString("title", true);
+  const rawPath = interaction.options.getString("path");
+
+  let cwd: string;
+
+  if (rawPath) {
+    const expandedPath = expandTilde(rawPath);
+    const candidatePath = resolve(expandedPath);
+
+    if (isBlockedPath(candidatePath)) {
+      await interaction.reply({ content: `パスが無効です: \`${candidatePath}\` はブロックされています。`, flags: 64 });
+      return;
+    }
+
+    try {
+      const stats = await stat(candidatePath);
+      if (!stats.isDirectory()) {
+        await interaction.reply({ content: `パスが無効です: \`${candidatePath}\` はディレクトリではありません。`, flags: 64 });
+        return;
+      }
+    } catch {
+      await interaction.reply({ content: `パスが無効です: \`${candidatePath}\` が存在しません。`, flags: 64 });
+      return;
+    }
+
+    cwd = candidatePath;
+  } else {
+    cwd = config.defaultCwd;
+  }
+
+  try {
+    const thread = await channel.threads.create({
+      name: title,
+      autoArchiveDuration: 1440,
+    });
+
+    const threadId = thread.id;
+    const sessionName = threadId;
+
+    const info: ClaudeSessionInfo = {
+      name: sessionName,
+      cwd,
+      threadId,
+      isMain: false,
+      claudeSessionId: null,
+      state: "idle",
+      usage: { inputTokens: 0, outputTokens: 0 },
+      additionalAllowedTools: new Set(),
+    };
+
+    sessionManager.registerSession(info);
+
+    await sendSessionStartNotification(thread, sessionName, cwd);
+
+    logger.info(`/new: thread=${threadId}, session=${sessionName}, cwd=${cwd}`);
+
+    await interaction.reply({ content: `スレッド <#${threadId}> を作成しました。`, flags: 64 });
+  } catch (error) {
+    logger.error(`Failed to create thread: ${String(error)}`);
+    if (!interaction.replied) {
+      await interaction.reply({ content: "エラー: スレッドの作成に失敗しました。", flags: 64 });
+    }
   }
 }

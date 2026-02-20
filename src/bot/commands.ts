@@ -21,6 +21,16 @@ const commands = [
     .addSubcommand((sub) =>
       sub.setName("list").setDescription("許可されたツール一覧を表示"),
     ),
+
+  new SlashCommandBuilder()
+    .setName("new")
+    .setDescription("新しいスレッドとセッションを作成")
+    .addStringOption((option) =>
+      option.setName("title").setDescription("スレッドタイトル").setRequired(true),
+    )
+    .addStringOption((option) =>
+      option.setName("path").setDescription("セッションの作業ディレクトリ（省略時はデフォルト）").setRequired(false),
+    ),
 ];
 
 export async function registerCommands(client: Client): Promise<void> {
