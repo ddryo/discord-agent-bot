@@ -374,6 +374,17 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
   }
 
   /**
+   * セッションの作業ディレクトリを変更する。
+   */
+  updateCwd(name: string, cwd: string): void {
+    const entry = this.sessions.get(name);
+    if (!entry) return;
+    entry.info.cwd = cwd;
+    logger.info(`CWD updated: ${name} → ${cwd}`);
+    this.persist();
+  }
+
+  /**
    * セッションの動的ツール許可リストをクリアする。
    */
   clearAllowedTools(name: string): void {

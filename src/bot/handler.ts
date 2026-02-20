@@ -14,7 +14,7 @@ const logger = createLogger("bot:handler");
 const MAIN_SESSION_NAME = "main";
 
 /** 対応するコマンド一覧 */
-const SUPPORTED_COMMANDS = ["clear", "status", "tools"];
+const SUPPORTED_COMMANDS = ["clear", "status", "tools", "cwd"];
 
 /** SessionManager への参照（index.ts から setSessionManager で設定） */
 let sessionManager: SessionManager | null = null;
@@ -33,6 +33,45 @@ function isBlockedPath(candidatePath: string): boolean {
   return BLOCKED_PATHS.some(
     (blocked) => candidatePath === blocked || candidatePath.startsWith(`${blocked}/`),
   );
+}
+
+/**
+ * パスを解決する。
+ * - ~ 始まり → チルダ展開して絶対パスに
+ * - / 始まり → そのまま絶対パスとして使用
+ * - それ以外 → DEFAULT_CWD + "/" + 入力を連結
+ */
+function resolvePath(rawPath: string): string {
+  if (rawPath.startsWith("~")) {
+    return resolve(expandTilde(rawPath));
+  }
+  if (rawPath.startsWith("/")) {
+    return resolve(rawPath);
+  }
+  return resolve(`${config.defaultCwd}/${rawPath}`);
+}
+
+/**
+ * パスのバリデーション。ブロックパスチェック + ディレクトリ存在確認。
+ * 成功時は解決済みパスを返し、失敗時はエラーメッセージを返す。
+ */
+async function validatePath(rawPath: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+  const candidatePath = resolvePath(rawPath);
+
+  if (isBlockedPath(candidatePath)) {
+    return { ok: false, error: `パスが無効です: \`${candidatePath}\` はブロックされています。` };
+  }
+
+  try {
+    const stats = await stat(candidatePath);
+    if (!stats.isDirectory()) {
+      return { ok: false, error: `パスが無効です: \`${candidatePath}\` はディレクトリではありません。` };
+    }
+  } catch {
+    return { ok: false, error: `パスが無効です: \`${candidatePath}\` が存在しません。` };
+  }
+
+  return { ok: true, path: candidatePath };
 }
 
 export async function handleMessage(message: Message): Promise<void> {
@@ -305,6 +344,80 @@ async function handleCommand(
     await message.reply({ embeds: [embed] });
     return;
   }
+
+  if (commandName === "cwd") {
+    const rawPath = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1).trim();
+    await handleCwdCommand(message, sessionName, rawPath || null);
+    return;
+  }
+}
+
+/**
+ * /cwd コマンドの共通処理。
+ * rawPath が null の場合は現在の cwd を表示、指定ありの場合は変更する。
+ */
+async function handleCwdCommand(
+  target: Message | ChatInputCommandInteraction,
+  sessionName: string,
+  rawPath: string | null,
+): Promise<void> {
+  if (!sessionManager) return;
+
+  const session = sessionManager.getSession(sessionName);
+  if (!session) {
+    const content = "セッションが見つかりません。";
+    if ("reply" in target && "commandName" in target) {
+      await (target as ChatInputCommandInteraction).reply({ content, flags: 64 });
+    } else {
+      await (target as Message).reply(content);
+    }
+    return;
+  }
+
+  // 引数なし: 現在の cwd を表示
+  if (!rawPath) {
+    const embed = new EmbedBuilder()
+      .setTitle("Current Working Directory")
+      .setDescription(`\`${session.cwd}\``)
+      .setColor(0x5865f2)
+      .setTimestamp();
+
+    if ("commandName" in target) {
+      await (target as ChatInputCommandInteraction).reply({ embeds: [embed] });
+    } else {
+      await (target as Message).reply({ embeds: [embed] });
+    }
+    return;
+  }
+
+  // パスバリデーション
+  const result = await validatePath(rawPath);
+  if (!result.ok) {
+    if ("commandName" in target) {
+      await (target as ChatInputCommandInteraction).reply({ content: result.error, flags: 64 });
+    } else {
+      await (target as Message).reply(result.error);
+    }
+    return;
+  }
+
+  const oldCwd = session.cwd;
+  sessionManager.updateCwd(sessionName, result.path);
+
+  const embed = new EmbedBuilder()
+    .setTitle("Working Directory Changed")
+    .addFields(
+      { name: "Before", value: `\`${oldCwd}\`` },
+      { name: "After", value: `\`${result.path}\`` },
+    )
+    .setColor(0x57f287)
+    .setTimestamp();
+
+  if ("commandName" in target) {
+    await (target as ChatInputCommandInteraction).reply({ embeds: [embed] });
+  } else {
+    await (target as Message).reply({ embeds: [embed] });
+  }
 }
 
 /**
@@ -489,6 +602,12 @@ export async function handleCommandInteraction(
     await handleNewCommand(interaction);
     return;
   }
+
+  if (commandName === "cwd") {
+    const rawPath = interaction.options.getString("path");
+    await handleCwdCommand(interaction, sessionName, rawPath);
+    return;
+  }
 }
 
 async function handleNewCommand(
@@ -511,26 +630,12 @@ async function handleNewCommand(
   let cwd: string;
 
   if (rawPath) {
-    const expandedPath = expandTilde(rawPath);
-    const candidatePath = resolve(expandedPath);
-
-    if (isBlockedPath(candidatePath)) {
-      await interaction.reply({ content: `パスが無効です: \`${candidatePath}\` はブロックされています。`, flags: 64 });
+    const result = await validatePath(rawPath);
+    if (!result.ok) {
+      await interaction.reply({ content: result.error, flags: 64 });
       return;
     }
-
-    try {
-      const stats = await stat(candidatePath);
-      if (!stats.isDirectory()) {
-        await interaction.reply({ content: `パスが無効です: \`${candidatePath}\` はディレクトリではありません。`, flags: 64 });
-        return;
-      }
-    } catch {
-      await interaction.reply({ content: `パスが無効です: \`${candidatePath}\` が存在しません。`, flags: 64 });
-      return;
-    }
-
-    cwd = candidatePath;
+    cwd = result.path;
   } else {
     cwd = config.defaultCwd;
   }

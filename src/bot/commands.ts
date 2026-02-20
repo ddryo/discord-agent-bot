@@ -31,6 +31,13 @@ const commands = [
     .addStringOption((option) =>
       option.setName("path").setDescription("セッションの作業ディレクトリ（省略時はデフォルト）").setRequired(false),
     ),
+
+  new SlashCommandBuilder()
+    .setName("cwd")
+    .setDescription("作業ディレクトリを表示・変更")
+    .addStringOption((option) =>
+      option.setName("path").setDescription("変更先のパス（省略時は現在のパスを表示）").setRequired(false),
+    ),
 ];
 
 export async function registerCommands(client: Client): Promise<void> {
