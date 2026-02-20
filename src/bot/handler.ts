@@ -14,7 +14,7 @@ const logger = createLogger("bot:handler");
 const MAIN_SESSION_NAME = "main";
 
 /** 対応するコマンド一覧 */
-const SUPPORTED_COMMANDS = ["clear", "status", "tools", "new"];
+const SUPPORTED_COMMANDS = ["clear", "status", "tools"];
 
 /** SessionManager への参照（index.ts から setSessionManager で設定） */
 let sessionManager: SessionManager | null = null;
@@ -28,6 +28,12 @@ export function setSessionManager(sm: SessionManager): void {
 
 /** パストラバーサル防止: システムディレクトリへのセッション作成をブロック */
 const BLOCKED_PATHS = ["/", "/etc", "/sys", "/proc", "/dev", "/boot", "/sbin", "/bin", "/usr/sbin", "/usr/bin"];
+
+function isBlockedPath(candidatePath: string): boolean {
+  return BLOCKED_PATHS.some(
+    (blocked) => candidatePath === blocked || candidatePath.startsWith(`${blocked}/`),
+  );
+}
 
 export async function handleMessage(message: Message): Promise<void> {
   if (message.author.bot) return;
@@ -466,7 +472,10 @@ export async function handleCommandInteraction(
 async function handleNewCommand(
   interaction: ChatInputCommandInteraction,
 ): Promise<void> {
-  if (!sessionManager) return;
+  if (!sessionManager) {
+    await interaction.reply({ content: "エラー: SessionManager が初期化されていません。", flags: 64 });
+    return;
+  }
 
   const channel = interaction.channel;
   if (!channel || channel.type !== ChannelType.GuildText) {
@@ -483,7 +492,7 @@ async function handleNewCommand(
     const expandedPath = expandTilde(rawPath);
     const candidatePath = resolve(expandedPath);
 
-    if (BLOCKED_PATHS.includes(candidatePath)) {
+    if (isBlockedPath(candidatePath)) {
       await interaction.reply({ content: `パスが無効です: \`${candidatePath}\` はブロックされています。`, flags: 64 });
       return;
     }
@@ -504,30 +513,37 @@ async function handleNewCommand(
     cwd = config.defaultCwd;
   }
 
-  const thread = await channel.threads.create({
-    name: title,
-    autoArchiveDuration: 1440,
-  });
+  try {
+    const thread = await channel.threads.create({
+      name: title,
+      autoArchiveDuration: 1440,
+    });
 
-  const threadId = thread.id;
-  const sessionName = threadId;
+    const threadId = thread.id;
+    const sessionName = threadId;
 
-  const info: ClaudeSessionInfo = {
-    name: sessionName,
-    cwd,
-    threadId,
-    isMain: false,
-    claudeSessionId: null,
-    state: "idle",
-    usage: { inputTokens: 0, outputTokens: 0 },
-    additionalAllowedTools: new Set(),
-  };
+    const info: ClaudeSessionInfo = {
+      name: sessionName,
+      cwd,
+      threadId,
+      isMain: false,
+      claudeSessionId: null,
+      state: "idle",
+      usage: { inputTokens: 0, outputTokens: 0 },
+      additionalAllowedTools: new Set(),
+    };
 
-  sessionManager.registerSession(info);
+    sessionManager.registerSession(info);
 
-  await sendSessionStartNotification(thread, sessionName, cwd);
+    await sendSessionStartNotification(thread, sessionName, cwd);
 
-  logger.info(`/new: thread=${threadId}, session=${sessionName}, cwd=${cwd}`);
+    logger.info(`/new: thread=${threadId}, session=${sessionName}, cwd=${cwd}`);
 
-  await interaction.reply({ content: `スレッド <#${threadId}> を作成しました。`, flags: 64 });
+    await interaction.reply({ content: `スレッド <#${threadId}> を作成しました。`, flags: 64 });
+  } catch (error) {
+    logger.error(`Failed to create thread: ${String(error)}`);
+    if (!interaction.replied) {
+      await interaction.reply({ content: "エラー: スレッドの作成に失敗しました。", flags: 64 });
+    }
+  }
 }
