@@ -1,7 +1,7 @@
 import { stat } from "fs/promises";
 import { resolve } from "path";
 import type { Message, TextChannel, ThreadChannel, ChatInputCommandInteraction } from "discord.js";
-import { EmbedBuilder } from "discord.js";
+import { ChannelType, EmbedBuilder } from "discord.js";
 import { config, expandTilde, isAuthorizedUser } from "../config.ts";
 import { createLogger } from "../logger.ts";
 import type { SessionManager } from "../claude/session.ts";
@@ -485,4 +485,78 @@ export async function handleCommandInteraction(
     await interaction.reply({ embeds: [embed] });
     return;
   }
+
+  if (commandName === "new") {
+    await handleNewCommand(interaction);
+    return;
+  }
+}
+
+async function handleNewCommand(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  if (!sessionManager) return;
+
+  const channel = interaction.channel;
+  if (!channel || channel.type !== ChannelType.GuildText) {
+    await interaction.reply({ content: "このコマンドはテキストチャンネルでのみ使用できます。", flags: 64 });
+    return;
+  }
+
+  const title = interaction.options.getString("title", true);
+  const rawPath = interaction.options.getString("path");
+
+  let cwd: string;
+
+  if (rawPath) {
+    const expandedPath = expandTilde(rawPath);
+    const candidatePath = resolve(expandedPath);
+
+    if (BLOCKED_PATHS.includes(candidatePath)) {
+      await interaction.reply({ content: `パスが無効です: \`${candidatePath}\` はブロックされています。`, flags: 64 });
+      return;
+    }
+
+    try {
+      const stats = await stat(candidatePath);
+      if (!stats.isDirectory()) {
+        await interaction.reply({ content: `パスが無効です: \`${candidatePath}\` はディレクトリではありません。`, flags: 64 });
+        return;
+      }
+    } catch {
+      await interaction.reply({ content: `パスが無効です: \`${candidatePath}\` が存在しません。`, flags: 64 });
+      return;
+    }
+
+    cwd = candidatePath;
+  } else {
+    cwd = config.defaultCwd;
+  }
+
+  const thread = await channel.threads.create({
+    name: title,
+    autoArchiveDuration: 1440,
+  });
+
+  const threadId = thread.id;
+  const sessionName = threadId;
+
+  const info: ClaudeSessionInfo = {
+    name: sessionName,
+    cwd,
+    threadId,
+    isMain: false,
+    claudeSessionId: null,
+    state: "idle",
+    usage: { inputTokens: 0, outputTokens: 0 },
+    additionalAllowedTools: new Set(),
+  };
+
+  sessionManager.registerSession(info);
+
+  await sendSessionStartNotification(thread, sessionName, cwd);
+
+  logger.info(`/new: thread=${threadId}, session=${sessionName}, cwd=${cwd}`);
+
+  await interaction.reply({ content: `スレッド <#${threadId}> を作成しました。`, flags: 64 });
 }
