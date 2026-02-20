@@ -8,6 +8,7 @@
 | M2 | マルチセッション（スレッド対応） |
 | M3 | インタラクション（通知・応答） |
 | M4 | 安定化 |
+| M5 | セッション作成の改善 |
 
 
 ## M1: 最小動作（メッセージ送受信）
@@ -48,16 +49,17 @@
 | T-M2-3 | ✅ | T-M2-2 | FR-007 | 複数セッションの並列ポーリング・動作検証 |
 
 ### マイルストーン達成条件
-- [x] スレッド作成時にスレッドタイトルを cwd とした Claude セッションが起動する
+- [x] スレッド作成時にデフォルト cwd で Claude セッションが起動する
 - [x] スレッドごとに独立した Claude セッションが並列動作する
-- [x] パスが存在しない場合はエラー通知される
+- [x] `/new` コマンドで任意の cwd を指定してスレッド+セッションを作成できる
 
 ### 実装メモ
 - OutputWatcher は Map<string, WatcherEntry> で各セッションを独立管理し、並列ポーリングに対応
 - SessionStore に getSessionByName() を追加し、sessionName → threadId の逆引きを実現
 - index.ts の output イベントハンドラで sessionName に基づいてメインチャンネル/スレッドへ正しくルーティング
-- threadCreate イベントで自動的にセッション作成・監視開始・SessionStore 登録を実施
-- handler.ts の handleThreadCreate でスレッドタイトルを expandTilde + resolve でパス解釈し、statSync で存在・ディレクトリ判定
+- threadCreate イベントで自動的にセッション作成・監視開始・SessionStore 登録を実施（cwd は常に config.defaultCwd）
+- handleThreadCreate はタイトルのパス解析を行わず、常にデフォルト cwd でセッション起動。スレッドタイトルは純粋に表示用
+- `/new` 経由で作成済みのスレッドは handleThreadCreate で二重起動しないようガード（SessionStore 既登録チェック）
 - handleThreadMessage はスレッドの parentId を検証し、対象チャンネルの子スレッドのみ処理する
 - client.ts に ThreadCreateHandler 型と onThreadCreate イベント登録を追加
 
@@ -115,3 +117,28 @@
 - **T-M4-4（長時間出力・大量出力への対策）**: `capturePane` のデフォルトスクロールバック行数を 200 → 500 に拡大。`sendToDiscord()` に rate limit 対策を追加（429 レスポンス時のリトライ、連続投稿チャンク間の 500ms 遅延）
 - **T-M4-5（操作ユーザー制限）**: `handler.ts` / `interactions.ts` に `isAuthorizedUser()` チェックを追加。未許可ユーザーのメッセージは無視、ボタン応答はエフェメラルメッセージで「権限がありません」と応答
 - **T-M4-6（セッション起動/終了通知）**: `responder.ts` に `sendSessionStartNotification()` / `sendSessionEndNotification()` 共通関数を実装。正常終了（青）、異常終了（赤）、手動終了（黄）、起動（緑）で色分け通知
+
+
+## M5: セッション作成の改善
+
+| タスクID | 状態 | 依存タスク | 対応要件 | 概要 |
+|----|------|------|--------|--------|
+| T-M5-1 | 🔲 | T-M2-1 | FR-019 | `/new` スラッシュコマンドの定義追加（commands.ts） |
+| T-M5-2 | 🔲 | T-M5-1 | FR-019 | `/new` コマンドの処理実装（handler.ts） -- スレッド作成 + セッション起動 |
+| T-M5-3 | 🔲 | T-M5-2 | FR-006 | `handleThreadCreate` の簡略化 -- パス解析ロジック廃止、常に defaultCwd で起動 |
+| T-M5-4 | 🔲 | T-M5-2, T-M5-3 | FR-006, FR-019 | `/new` 経由スレッドの二重起動防止ガード |
+| T-M5-5 | 🔲 | T-M5-4 | - | 動作検証 -- 手動スレッド作成・`/new` コマンド・パスバリデーション |
+
+### マイルストーン達成条件
+- [ ] `/new` コマンドで `title` と `path` を指定してスレッド+セッションを作成できる
+- [ ] `/new` で `path` 省略時は DEFAULT_CWD でセッションが起動する
+- [ ] `/new` で指定した `path` の `BLOCKED_PATHS` チェックと `stat` ディレクトリ確認が動作する
+- [ ] 手動スレッド作成時に常に DEFAULT_CWD でセッションが起動する（タイトルをパスとして解釈しない）
+- [ ] `/new` 経由で作成したスレッドが `handleThreadCreate` で二重起動しない
+
+### 実装メモ
+- **T-M5-1**: `commands.ts` に `/new` コマンドを `SlashCommandBuilder` で定義。`title`（String, required）と `path`（String, optional）オプションを追加
+- **T-M5-2**: `handler.ts` の `handleCommandInteraction` に `/new` の分岐を追加。`path` 指定時は `expandTilde` + `resolve` + `BLOCKED_PATHS` チェック + `stat` ディレクトリ確認を実施。チャンネルに `threads.create()` でスレッドを作成し、SessionManager にセッション登録、起動通知 Embed を投稿
+- **T-M5-3**: `handleThreadCreate` から `expandTilde` + `resolve` + `stat` のパス解析ロジックを削除。常に `config.defaultCwd` でセッションを起動するように変更。スレッドタイトルは表示用のみ
+- **T-M5-4**: `handleThreadCreate` 冒頭の `getSessionByThreadId` チェック（既存）が二重起動防止ガードとして機能する。`/new` 側でセッション登録後に threadCreate イベントが発火しても、既に登録済みのためスキップされる
+- **影響ファイル**: `src/bot/commands.ts`, `src/bot/handler.ts`

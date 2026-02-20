@@ -27,7 +27,7 @@ Discord チャンネルから Claude Code CLI を操作する Bot を提供す�
 | FR-003 | 出力監視 | tmux の出力を capture-pane ポーリングで監視し、差分を検出する | Must | o |
 | FR-004 | 出力パース | raw テキストを正規化イベント（text / tool_approval / ask_user / idle / session_end / error）に変換する | Must | o |
 | FR-005 | メインセッション | メインチャンネルに紐づく常駐 Claude セッション（cwd: DEFAULT_CWD） | Must | o |
-| FR-006 | スレッドセッション | スレッド作成時にスレッドタイトルを cwd としたセッションを起動し、スレッド内メッセージを振り分ける | Must | o |
+| FR-006 | スレッドセッション | スレッド作成時にデフォルト cwd でセッションを起動し、スレッド内メッセージを振り分ける。`/new` コマンドで任意の cwd を指定可能 | Must | o |
 | FR-007 | 複数セッション並列動作 | 複数スレッドの Claude セッションが同時に稼働する | Must | o |
 | FR-008 | ツール許可通知 | ツール実行許可待ちを Embed + ボタン（Approve / Deny / AlwaysAllow）で通知し、応答を CLI に送信する | Must | o |
 | FR-009 | AskUserQuestion 通知 | AskUserQuestion を質問 + 選択肢ボタンで通知し、テキスト返答も受け付ける | Must | o |
@@ -40,6 +40,7 @@ Discord チャンネルから Claude Code CLI を操作する Bot を提供す�
 | FR-016 | 起動時ヘルスチェック | Bot 起動時に tmux・Claude CLI の存在を確認する | Should | - |
 | FR-017 | 操作ユーザー制限 | DISCORD_USER_ID が設定されている場合、そのユーザーのみ操作を許可する | Should | - |
 | FR-018 | Discord メッセージ分割 | 2000 文字制限を考慮した分割投稿（コードブロック途中切断の回避） | Should | - |
+| FR-019 | /new スラッシュコマンド | `title`（必須）と `path`（任意）を引数に取り、チャンネルにスレッドを作成してセッションを起動する | Must | - |
 
 **優先度**: Must（必須）/ Should（推奨）/ Could（任意）
 
@@ -72,6 +73,7 @@ discord-agent-bot/
 │   │   └── parser.ts         # ANSI 除去・パターン検出・イベント変換 [M1]
 │   ├── bot/
 │   │   ├── client.ts         # Discord クライアント初期化・イベント登録 [M1]
+│   │   ├── commands.ts       # スラッシュコマンド定義・登録             [M3]
 │   │   ├── handler.ts        # メッセージ受信 → セッション振り分け   [M1]
 │   │   ├── responder.ts      # Claude 出力 → Discord 投稿（分割・整形）[M1]
 │   │   └── interactions.ts   # ツール許可・AskUser のボタン通知・応答処理 [M3]
@@ -90,18 +92,22 @@ Discord チャンネル (DISCORD_CHANNEL_ID)
 +-- メッセージ ----------> メイン tmux セッション (ccbot-main, cwd: DEFAULT_CWD)
 |   +-- Claude 応答 <---- 出力監視 (capture-pane ポーリング)
 |
-+-- スレッド「~/projects/app」 --> tmux セッション (ccbot-<threadId>)
++-- /new title:"機能A開発" path:~/projects/app
+|   +-- スレッド「機能A開発」 -----> tmux セッション (ccbot-<threadId>, cwd: ~/projects/app)
 |   +-- メッセージ --> send-keys
 |   +-- Claude 応答 <---- 出力監視
 |
-+-- スレッド「~/work/api」 ------> tmux セッション (ccbot-<threadId>)
++-- 手動スレッド「バグ修正メモ」 --> tmux セッション (ccbot-<threadId>, cwd: DEFAULT_CWD)
+|   +-- メッセージ --> send-keys
+|   +-- Claude 応答 <---- 出力監視
+|
 +-- ...
 ```
 
 ### 通信フロー
 
 ```
-[Discord メッセージ受信]
+[Discord メッセージ受信 / スラッシュコマンド受信]
   |
   v
 [操作ユーザー制限チェック（DISCORD_USER_ID 設定時）]
@@ -109,7 +115,13 @@ Discord チャンネル (DISCORD_CHANNEL_ID)
   +-- 未許可ユーザー --> 無視（ボタン応答はエフェメラルで権限なしメッセージ）
   |
   v
-[コマンド判定（/ で始まるか）]
+[スラッシュコマンド判定]
+  |
+  +-- /new --> パスバリデーション → スレッド作成 → セッション登録 → 起動通知
+  +-- /clear, /status, /tools --> 対応処理
+  |
+  v
+[テキストコマンド判定（/ で始まるか）]
   |
   +-- コマンド --+
   |              |
@@ -131,6 +143,11 @@ Discord チャンネル (DISCORD_CHANNEL_ID)
   +-- アイドル --> 待機
   +-- セッション終了 --> 終了通知 Embed + クリーンアップ
   +-- セッション死亡 --> エラー通知 Embed + クリーンアップ（capturePane 失敗 → hasSession で検知）
+
+[スレッド作成イベント（threadCreate）]
+  |
+  +-- /new 経由で既にセッション登録済み --> スキップ（二重起動防止）
+  +-- 手動作成 --> DEFAULT_CWD でセッション登録 → 起動通知
 ```
 
 ### パーサーのイベント層（FR-004）
@@ -200,7 +217,8 @@ tmux コマンドの実行には `Bun.spawn` の引数配列形式を使用し�
 | 種別 | セッション名 | cwd |
 |------|-------------|-----|
 | メインチャンネル | `ccbot-main` | DEFAULT_CWD（デフォルト: `~/Desktop`） |
-| スレッド | `ccbot-{threadId}` | スレッドタイトルのパス |
+| スレッド（手動作成） | `ccbot-{threadId}` | DEFAULT_CWD |
+| スレッド（`/new` で作成） | `ccbot-{threadId}` | `/new` の `path` 引数（省略時は DEFAULT_CWD） |
 
 ### Discord インタラクション
 
@@ -227,6 +245,20 @@ tmux コマンドの実行には `Bun.spawn` の引数配列形式を使用し�
 - Embed のタイトル: `Question`、説明に質問文を表示
 - 選択肢がある場合はボタンを表示（最大5個/行、ActionRow は最大5行）
 - ボタン・テキストどちらでも応答可（フッターで案内）
+
+**スレッド作成コマンド（FR-019）**
+
+| 引数 | 必須 | 説明 |
+|------|------|------|
+| `title` | o | スレッドタイトル（表示用、パスとして解釈しない） |
+| `path` | - | セッションの cwd。省略時は DEFAULT_CWD |
+
+処理フロー:
+1. `path` が指定されている場合: `BLOCKED_PATHS` チェック + `stat` によるディレクトリ存在確認
+2. チャンネルにスレッドを作成（タイトル: `title`）
+3. セッションを登録・起動（cwd: 検証済みの `path` または DEFAULT_CWD）
+4. 起動通知 Embed をスレッドに投稿
+5. `/new` 経由で作成したスレッドは `handleThreadCreate` 側で二重起動しないようガード（SessionStore に既に登録済みかで判定）
 
 **CLI コマンド（FR-010, FR-011, FR-012）**
 
