@@ -86,7 +86,7 @@ Claude の応答は同じチャンネルに投稿されます。会話コンテ�
 
 ### ツール許可
 
-内部では通常の Claude CLI コマンド（`claude -p`）を実行しているため、作業ディレクトリの `.claude/settings.json` に記述された permission 設定がそのまま引き継がれます。事前に `settings.json` で許可済みのツールはブロックされません。
+内部では通常の Claude CLI コマンド（`claude -p`）を実行しているため、グローバル（`~/.claude/settings.json`）または作業ディレクトリ（`.claude/settings.json`）の permission 設定がそのまま引き継がれます。事前に `settings.json` で許可済みのツールはブロックされません。
 
 許可されていないツールを Claude が使おうとすると、Approve / Deny ボタン付きの通知が表示されます。
 
