@@ -150,13 +150,16 @@ async function main(): Promise<void> {
       if (text.trim()) {
         await sendToDiscord(channel, text);
       }
-      logger.info(`Response sent: session=${sessionName}, input=${usage.inputTokens}, output=${usage.outputTokens}`);
+      const preview = text.length > 300 ? text.substring(0, 300) + "..." : text;
+      logger.info(`Claude response: session=${sessionName}\n${preview}`);
+      logger.info(`Token usage: input=${usage.inputTokens}, output=${usage.outputTokens}`);
     })();
   });
 
-  sessionMgr.on("toolUse", (sessionName, toolName, _toolInput) => {
+  sessionMgr.on("toolUse", (sessionName, toolName, toolInput) => {
     // ツール実行はログのみ（Discord 通知は toolBlocked / result で行う）
-    logger.debug(`Tool use: session=${sessionName}, tool=${toolName}`);
+    const inputSummary = JSON.stringify(toolInput).substring(0, 200);
+    logger.info(`Tool use: session=${sessionName}, tool=${toolName}, input=${inputSummary}`);
   });
 
   sessionMgr.on("toolBlocked", (sessionName, toolName, toolInput, _errorContent, bufferedText) => {

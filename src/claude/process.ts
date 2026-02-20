@@ -221,10 +221,19 @@ export class ClaudeProcess extends EventEmitter<ClaudeProcessEvents> {
             update({ fullText: state.fullText + block.text });
           } else if (block.type === "tool_use") {
             if (block.name === "AskUserQuestion") {
-              const input = block.input as { question?: string; options?: Array<{ label: string }> };
-              const question = input.question ?? "";
-              const options = (input.options ?? []).map((o) => o.label);
-              this.emit("askUser", question, options, block.id);
+              const input = block.input as {
+                questions?: Array<{
+                  question?: string;
+                  header?: string;
+                  options?: Array<{ label: string; description?: string }>;
+                }>;
+              };
+              const questions = input.questions ?? [];
+              const question = questions.map((q) => q.question ?? "").filter(Boolean).join("\n\n");
+              const options = questions.flatMap((q) => (q.options ?? []).map((o) => o.label));
+              this.emit("askUser", question || "(質問内容を取得できませんでした)", options, block.id);
+              // lastToolUse を記録し、後続の tool_result(is_error) で toolBlocked を抑制する
+              update({ lastToolUse: { name: block.name, input: block.input as Record<string, unknown>, id: block.id } });
             } else {
               this.emit("toolUse", block.name, block.input, block.id);
               update({ lastToolUse: { name: block.name, input: block.input, id: block.id } });
@@ -240,6 +249,11 @@ export class ClaudeProcess extends EventEmitter<ClaudeProcessEvents> {
 
         for (const block of content) {
           if (block.type === "tool_result" && block.is_error) {
+            // AskUserQuestion は askUser イベントで既に通知済みなので toolBlocked を抑制
+            if (state.lastToolUse?.name === "AskUserQuestion") {
+              update({ lastToolUse: null });
+              continue;
+            }
             const toolName = state.lastToolUse?.name ?? "unknown";
             const toolInput = state.lastToolUse?.input ?? {};
             this.emit("toolBlocked", toolName, toolInput, block.content);
