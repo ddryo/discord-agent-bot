@@ -25,15 +25,15 @@ Discord チャンネルから Claude Code CLI を操作する Bot を提供す�
 | FR-001 | メッセージ送受信 | チャンネルのメッセージを Claude CLI に送信し、応答を Discord に投稿する |
 | FR-002 | プロセス管理 | `claude -p --output-format stream-json` でプロセスを起動・制御する |
 | FR-003 | stream-json パース | stdout の stream-json イベント（system / assistant / user / result）をパースしてドメインイベントに変換する |
-| FR-004 | メインセッション | メインチャンネルに紐づく常駐 Claude セッション（cwd: DEFAULT_CWD） |
-| FR-005 | スレッドセッション | スレッド作成時にデフォルト cwd でセッションを起動し、スレッド内メッセージを振り分ける。`/new` コマンドで任意の cwd を指定可能 |
+| FR-004 | メインセッション | メインチャンネルに紐づくセッション情報を常駐管理し、メッセージごとに `claude -p` プロセスを起動する（cwd: DEFAULT_CWD） |
+| FR-005 | スレッドセッション | スレッド作成時にデフォルト cwd でセッション情報を登録し、スレッド内メッセージを振り分ける。`/new` コマンドで任意の cwd を指定可能 |
 | FR-006 | 複数セッション並列動作 | 複数スレッドの Claude セッションが同時に稼働する |
 | FR-007 | ツールブロック通知 | ツール実行がブロックされた際に Embed + ボタン（Approve / Deny）で通知し、Approve 時は `--allowedTools` に追加して自動再送信する |
 | FR-008 | AskUserQuestion 通知 | AskUserQuestion を質問 Embed で通知し、次のテキストメッセージで回答 → `--resume` で継続する |
 | FR-009 | テキストコマンド | `/clear`, `/status`, `/tools`, `/exit` をテキストコマンドとして処理する |
 | FR-010 | スラッシュコマンド | `/clear`, `/status`, `/tools list`, `/tools clear`, `/new` を Application Command として登録・処理する |
-| FR-011 | /new コマンド | `title`（必須）と `path`（任意）を引数に取り、チャンネルにスレッドを作成してセッションを起動する |
-| FR-012 | セッション起動/終了通知 | セッションの起動・終了時にステータスメッセージを投稿する |
+| FR-011 | /new コマンド | `title`（必須）と `path`（任意）を引数に取り、チャンネルにスレッドを作成してセッション情報を登録する |
+| FR-012 | セッション起動/終了通知 | セッション登録時に起動通知、`/exit` 実行時に終了通知を投稿する |
 | FR-013 | セッション永続化 | セッション情報を `.data/sessions.json` に保存し、Bot 再起動後に `--resume` で会話を継続する |
 | FR-014 | グレースフルシャットダウン | SIGINT/SIGTERM 受信時に全プロセスを終了する |
 | FR-015 | 起動時ヘルスチェック | Bot 起動時に Claude CLI の存在を確認する |
@@ -284,8 +284,8 @@ claude -p --output-format stream-json --verbose [--resume {sessionId}] [--allowe
 
 | ボタン | customId | 動作 |
 |--------|----------|------|
-| Approve | `tool_approve:{sessionName}` | ツールパターンを `--allowedTools` に追加し、前回メッセージを自動再送信 |
-| Deny | `tool_deny:{sessionName}` | deny 通知を自動再送信 |
+| Approve | `tool_approve:{sessionName}` | ツールパターンを `--allowedTools` に追加し、`Approved: {pattern}` 制御メッセージを `--resume` で自動送信して継続 |
+| Deny | `tool_deny:{sessionName}` | `Denied: {toolName}` 制御メッセージを `--resume` で自動送信して継続 |
 
 - Embed のタイトル: `Tool Blocked: {ツール名}`、説明にツール入力を JSON コードブロックで表示
 - Approve 時のツールパターン生成: Bash の場合はコマンド先頭語で絞る（例: `Bash(mkdir:*)`）、それ以外はツール名そのもの
@@ -320,7 +320,6 @@ claude -p --output-format stream-json --verbose [--resume {sessionId}] [--allowe
 | status | `/status` | `/status` | セッション情報 Embed（名前・状態・cwd・sessionId） |
 | tools | `/tools` | `/tools list` | 許可ツール一覧 Embed（静的 + 動的） |
 | tools clear | `/tools clear` | `/tools clear` | 動的ツール許可をクリア |
-| cost | `/cost` | - | トークン使用量 Embed |
 | exit | `/exit` | - | セッション削除 + 終了通知 Embed |
 | new | - | `/new` | スレッド + セッション作成 |
 
@@ -329,8 +328,6 @@ claude -p --output-format stream-json --verbose [--resume {sessionId}] [--allowe
 | 通知種別 | Embed 色 | 説明 |
 |----------|----------|------|
 | 起動 | 緑 (`0x57f287`) | セッション名と作業ディレクトリを表示 |
-| 正常終了 | 青 (`0x5865f2`) | 正常終了時 |
-| 異常終了 | 赤 (`0xed4245`) | エラー終了時 |
 | 手動終了 | 黄 (`0xfee75c`) | `/exit` コマンド実行時 |
 
 **Discord 投稿の rate limit 対策（FR-017）**
