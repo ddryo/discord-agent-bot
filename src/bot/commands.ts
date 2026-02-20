@@ -34,9 +34,9 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("cwd")
-    .setDescription("作業ディレクトリを表示・変更")
+    .setDescription("作業ディレクトリを変更")
     .addStringOption((option) =>
-      option.setName("path").setDescription("変更先のパス（省略時は現在のパスを表示）").setRequired(false),
+      option.setName("path").setDescription("変更先のパス").setRequired(true),
     ),
 ];
 

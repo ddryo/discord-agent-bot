@@ -347,26 +347,29 @@ async function handleCommand(
 
   if (commandName === "cwd") {
     const rawPath = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1).trim();
-    await handleCwdCommand(message, sessionName, rawPath || null);
+    if (!rawPath) {
+      await message.reply("使い方: `/cwd <path>`");
+      return;
+    }
+    await handleCwdCommand(message, sessionName, rawPath);
     return;
   }
 }
 
 /**
- * /cwd コマンドの共通処理。
- * rawPath が null の場合は現在の cwd を表示、指定ありの場合は変更する。
+ * /cwd コマンドの共通処理。作業ディレクトリを変更する。
  */
 async function handleCwdCommand(
   target: Message | ChatInputCommandInteraction,
   sessionName: string,
-  rawPath: string | null,
+  rawPath: string,
 ): Promise<void> {
   if (!sessionManager) return;
 
   const session = sessionManager.getSession(sessionName);
   if (!session) {
     const content = "セッションが見つかりません。";
-    if ("reply" in target && "commandName" in target) {
+    if ("commandName" in target) {
       await (target as ChatInputCommandInteraction).reply({ content, flags: 64 });
     } else {
       await (target as Message).reply(content);
@@ -374,23 +377,6 @@ async function handleCwdCommand(
     return;
   }
 
-  // 引数なし: 現在の cwd を表示
-  if (!rawPath) {
-    const embed = new EmbedBuilder()
-      .setTitle("Current Working Directory")
-      .setDescription(`\`${session.cwd}\``)
-      .setColor(0x5865f2)
-      .setTimestamp();
-
-    if ("commandName" in target) {
-      await (target as ChatInputCommandInteraction).reply({ embeds: [embed] });
-    } else {
-      await (target as Message).reply({ embeds: [embed] });
-    }
-    return;
-  }
-
-  // パスバリデーション
   const result = await validatePath(rawPath);
   if (!result.ok) {
     if ("commandName" in target) {
@@ -604,7 +590,7 @@ export async function handleCommandInteraction(
   }
 
   if (commandName === "cwd") {
-    const rawPath = interaction.options.getString("path");
+    const rawPath = interaction.options.getString("path", true);
     await handleCwdCommand(interaction, sessionName, rawPath);
     return;
   }
