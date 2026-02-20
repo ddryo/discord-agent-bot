@@ -51,15 +51,15 @@
 ### マイルストーン達成条件
 - [x] スレッド作成時にデフォルト cwd で Claude セッションが起動する
 - [x] スレッドごとに独立した Claude セッションが並列動作する
-- [x] `/new` コマンドで任意の cwd を指定してスレッド+セッションを作成できる
+- [x] `/new` コマンドで任意の cwd を指定してスレッド+セッションを作成できる（M5 で実装）
 
 ### 実装メモ
 - OutputWatcher は Map<string, WatcherEntry> で各セッションを独立管理し、並列ポーリングに対応
 - SessionStore に getSessionByName() を追加し、sessionName → threadId の逆引きを実現
 - index.ts の output イベントハンドラで sessionName に基づいてメインチャンネル/スレッドへ正しくルーティング
 - threadCreate イベントで自動的にセッション作成・監視開始・SessionStore 登録を実施（cwd は常に config.defaultCwd）
-- handleThreadCreate はタイトルのパス解析を行わず、常にデフォルト cwd でセッション起動。スレッドタイトルは純粋に表示用
-- `/new` 経由で作成済みのスレッドは handleThreadCreate で二重起動しないようガード（SessionStore 既登録チェック）
+- handleThreadCreate はタイトルのパス解析を行わず、常にデフォルト cwd でセッション起動。スレッドタイトルは純粋に表示用（M5 で確定した設計）
+- `/new` 経由で作成済みのスレッドは handleThreadCreate で二重起動しないようガード（SessionStore 既登録チェック。M5 で実装）
 - handleThreadMessage はスレッドの parentId を検証し、対象チャンネルの子スレッドのみ処理する
 - client.ts に ThreadCreateHandler 型と onThreadCreate イベント登録を追加
 
@@ -130,11 +130,11 @@
 | T-M5-5 | ✅ | T-M5-4 | - | 動作検証 -- 手動スレッド作成・`/new` コマンド・パスバリデーション |
 
 ### マイルストーン達成条件
-- [ ] `/new` コマンドで `title` と `path` を指定してスレッド+セッションを作成できる
-- [ ] `/new` で `path` 省略時は DEFAULT_CWD でセッションが起動する
-- [ ] `/new` で指定した `path` の `BLOCKED_PATHS` チェックと `stat` ディレクトリ確認が動作する
-- [ ] 手動スレッド作成時に常に DEFAULT_CWD でセッションが起動する（タイトルをパスとして解釈しない）
-- [ ] `/new` 経由で作成したスレッドが `handleThreadCreate` で二重起動しない
+- [x] `/new` コマンドで `title` と `path` を指定してスレッド+セッションを作成できる
+- [x] `/new` で `path` 省略時は DEFAULT_CWD でセッションが起動する
+- [x] `/new` で指定した `path` の `BLOCKED_PATHS` チェックと `stat` ディレクトリ確認が動作する
+- [x] 手動スレッド作成時に常に DEFAULT_CWD でセッションが起動する（タイトルをパスとして解釈しない）
+- [x] `/new` 経由で作成したスレッドが `handleThreadCreate` で二重起動しない
 
 ### 実装メモ
 - **T-M5-1**: `commands.ts` に `/new` コマンドを `SlashCommandBuilder` で定義。`title`（String, required）と `path`（String, optional）オプションを追加
