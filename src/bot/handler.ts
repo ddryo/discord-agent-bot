@@ -379,6 +379,15 @@ export async function handleThreadCreate(
 export async function handleCommandInteraction(
   interaction: ChatInputCommandInteraction,
 ): Promise<void> {
+  // チャンネル制限: 指定チャンネル（またはその配下スレッド）以外では無視
+  const resolvedChannelId = interaction.channel?.isThread()
+    ? interaction.channel.parentId
+    : interaction.channelId;
+  if (resolvedChannelId !== config.discordChannelId) {
+    await interaction.reply({ content: "このチャンネルではコマンドを使用できません。", ephemeral: true });
+    return;
+  }
+
   if (!isAuthorizedUser(interaction.user.id)) {
     await interaction.reply({ content: "この操作を行う権限がありません。", flags: 64 });
     return;
