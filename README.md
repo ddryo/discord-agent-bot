@@ -1,7 +1,7 @@
-# discord-agent-bot
+# Discord Agent Bot with Clude Code CLI (for Mac)
 
-Discord チャンネルから Claude Code CLI を操作する Bot。
-メッセージを送るだけで Claude と対話でき、スレッドごとに独立したセッションを並列で動かせます。
+Discord から Claude Code CLI を操作する Bot。
+メッセージを送るだけで Claude Code と対話でき、スレッドごとに独立したセッションを並列で動かせます。
 
 ## 前提条件
 
@@ -14,18 +14,27 @@ Discord チャンネルから Claude Code CLI を操作する Bot。
 ### 1. Discord Bot の作成
 
 1. [Discord Developer Portal](https://discord.com/developers/applications) で新しいアプリケーションを作成
-2. Bot セクションで Bot を追加し、トークンをコピー
-3. 以下の Privileged Gateway Intents を有効化:
-   - **Message Content Intent**
-4. OAuth2 > URL Generator で以下の権限を付与して招待 URL を生成:
+2. **Installation** > **Install Link** を `None` に設定 (Bot を非公開にするために必要な準備)
+3. **Bot** セクションで Bot を追加し、トークンをコピー
+4. **Bot** セクションで **Public Bot** を **OFF** に設定
+5. **Bot** セクションで **Privileged Gateway Intents** > **Message Content Intent** を有効化
+6. **OAuth2** > **OAuth2 URL Generator** で以下の権限を付与して招待 URL を生成:
    - Scopes: `bot`, `applications.commands`
    - Bot Permissions: `Send Messages`, `Create Public Threads`, `Send Messages in Threads`, `Manage Messages`, `Read Message History`, `Use Slash Commands`
-5. 生成された URL でサーバーに Bot を招待
+7. 生成された URL でサーバーに Bot を招待
+
+
+![Discord Install Link](ss/discord-install-link.png)
+
+![Discord Bot Auto](ss/dicord-bot-auto.png)
+
+![Discord OAuth URL Generator](ss/discord-oauth-urlgen.png)
+
 
 ### 2. インストール
 
 ```bash
-git clone https://github.com/your-username/discord-agent-bot.git
+git clone https://github.com/ddryo/discord-agent-bot.git
 cd discord-agent-bot
 bun install
 ```
@@ -45,7 +54,7 @@ DISCORD_CHANNEL_ID=your-channel-id
 
 # オプション
 DISCORD_USER_ID=your-discord-user-id    # 操作を許可するユーザー（未設定で全員許可）
-DEFAULT_CWD=~/Desktop                    # Claude の作業ディレクトリ
+DEFAULT_CWD=~/Desktop                    # Claude Code のデフォルト作業ディレクトリ
 ALLOWED_TOOLS=Bash(ls:*),Read,Glob       # 事前許可するツール（カンマ区切り）
 ```
 
@@ -86,7 +95,8 @@ Claude の応答は同じチャンネルに投稿されます。会話コンテ�
 
 ### ツール許可
 
-内部では通常の Claude CLI コマンド（`claude -p`）を実行しているため、グローバル（`~/.claude/settings.json`）または作業ディレクトリ（`.claude/settings.json`）の permission 設定がそのまま引き継がれます。事前に `settings.json` で許可済みのツールはブロックされません。
+内部では通常の Claude CLI コマンド（`claude -p`）を実行しているため、グローバル（`~/.claude/settings.json`）または作業ディレクトリ（`.claude/settings.local.json`等）の permission 設定がそのまま引き継がれます。事前に `settings.json` で許可済みのツールはブロックされません。
+
 
 許可されていないツールを Claude が使おうとすると、Approve / Deny ボタン付きの通知が表示されます。
 
