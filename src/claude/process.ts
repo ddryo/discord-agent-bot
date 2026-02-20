@@ -115,7 +115,10 @@ export class ClaudeProcess extends EventEmitter<ClaudeProcessEvents> {
       stdout: "pipe",
       stderr: "pipe",
       cwd: this.options.cwd,
-      env: { ...process.env },
+      env: {
+        ...process.env,
+        ...(this.options.cwd ? { PWD: this.options.cwd } : {}),
+      },
     });
 
     // プロンプトを stdin 経由で送信
