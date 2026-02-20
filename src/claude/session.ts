@@ -3,6 +3,8 @@ import { config } from "../config.ts";
 import { createLogger } from "../logger.ts";
 import type { ClaudeSessionInfo } from "../types.ts";
 import { ClaudeProcess } from "./process.ts";
+import { SessionStore } from "./sessionStore.ts";
+import type { PersistedSession } from "./sessionStore.ts";
 
 const logger = createLogger("claude:session");
 
@@ -30,6 +32,58 @@ export interface SessionManagerEvents {
  */
 export class SessionManager extends EventEmitter<SessionManagerEvents> {
   private sessions = new Map<string, SessionEntry>();
+  private store = new SessionStore();
+
+  /**
+   * 永続化されたセッション情報を復元する。
+   * Bot 起動時に呼び出す。
+   */
+  async restoreSessions(): Promise<number> {
+    const persisted = await this.store.load();
+    let restored = 0;
+
+    for (const ps of persisted) {
+      if (this.sessions.has(ps.name)) {
+        logger.debug(`Skipping already registered session: ${ps.name}`);
+        continue;
+      }
+
+      const info: ClaudeSessionInfo = {
+        name: ps.name,
+        cwd: ps.cwd,
+        threadId: ps.threadId,
+        isMain: ps.isMain,
+        claudeSessionId: ps.claudeSessionId,
+        state: "idle",
+        usage: { inputTokens: 0, outputTokens: 0 },
+        additionalAllowedTools: new Set(ps.additionalAllowedTools),
+      };
+
+      this.sessions.set(info.name, { info, process: null, textBuffer: "", toolBlockedPending: false });
+      restored++;
+      logger.info(`Session restored: ${info.name} (threadId: ${info.threadId}, claudeSessionId: ${info.claudeSessionId ? "yes" : "none"})`);
+    }
+
+    return restored;
+  }
+
+  /**
+   * 現在のセッション情報を永続化する。
+   */
+  private persist(): void {
+    const data: PersistedSession[] = [];
+    for (const entry of this.sessions.values()) {
+      data.push({
+        name: entry.info.name,
+        cwd: entry.info.cwd,
+        threadId: entry.info.threadId,
+        isMain: entry.info.isMain,
+        claudeSessionId: entry.info.claudeSessionId,
+        additionalAllowedTools: [...entry.info.additionalAllowedTools],
+      });
+    }
+    void this.store.save(data);
+  }
 
   /**
    * セッションを登録する（プロセスは起動しない）。
@@ -41,6 +95,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
     }
     this.sessions.set(info.name, { info, process: null, textBuffer: "", toolBlockedPending: false });
     logger.info(`Session registered: ${info.name} (cwd: ${info.cwd})`);
+    this.persist();
   }
 
   /**
@@ -67,6 +122,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
         `Session resume failed (exit code ${result.exitCode}), resetting session ID and retrying: ${name}`,
       );
       entry.info.claudeSessionId = null;
+      this.persist();
       this.emit(
         "error",
         name,
@@ -113,6 +169,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
         if (!isResuming) {
           // 新規セッション: system イベントからセッションIDを取得
           entry.info.claudeSessionId = sessionId;
+          this.persist();
           logger.info(`Session ID acquired: ${name} → ${sessionId}`);
         } else {
           // resume 時: system イベントのIDが実際のセッションIDと異なる場合があるため無視
@@ -197,6 +254,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
     }
     this.sessions.delete(name);
     logger.info(`Session removed: ${name}`);
+    this.persist();
   }
 
   /**
@@ -209,6 +267,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
     entry.info.claudeSessionId = null;
     entry.info.additionalAllowedTools.clear();
     logger.info(`Session cleared: ${name}`);
+    this.persist();
   }
 
   /**
@@ -302,6 +361,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
     if (!entry) return;
     entry.info.additionalAllowedTools.add(tool);
     logger.info(`Allowed tool added: ${name} → ${tool}`);
+    this.persist();
   }
 
   /**
@@ -321,6 +381,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
     if (!entry) return;
     entry.info.additionalAllowedTools.clear();
     logger.info(`Allowed tools cleared: ${name}`);
+    this.persist();
   }
 
   /**
@@ -330,10 +391,13 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
     for (const [name, entry] of this.sessions) {
       if (entry.process) {
         entry.process.kill();
+        entry.process = null;
+        entry.info.state = "idle";
         logger.info(`Killed process for session: ${name}`);
       }
     }
-    this.sessions.clear();
+    // セッション情報は永続化済みのため Map はクリアしない
+    // （shutdown 後の再起動で restoreSessions() により復元される）
   }
 
   /**

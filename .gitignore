@@ -5,6 +5,7 @@ dist
 !.env.example
 .DS_Store
 *.log
+.data
 
 
 # project workflow files

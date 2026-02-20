@@ -58,18 +58,26 @@ async function main(): Promise<void> {
   setSessionManager(sessionMgr);
   setInteractionSessionManager(sessionMgr);
 
-  // 3. メインセッション登録（プロセスは起動しない、最初のメッセージで起動）
-  const mainSessionInfo: ClaudeSessionInfo = {
-    name: MAIN_SESSION_NAME,
-    cwd: config.defaultCwd,
-    threadId: null,
-    isMain: true,
-    claudeSessionId: null,
-    state: "idle",
-    usage: { inputTokens: 0, outputTokens: 0 },
-    additionalAllowedTools: new Set(),
-  };
-  sessionMgr.registerSession(mainSessionInfo);
+  // 3. 永続化されたセッションを復元 → メインセッション登録
+  const restoredCount = await sessionMgr.restoreSessions();
+  if (restoredCount > 0) {
+    logger.info(`Restored ${restoredCount} sessions from store`);
+  }
+
+  // メインセッションが復元されなかった場合のみ新規登録
+  if (!sessionMgr.hasSession(MAIN_SESSION_NAME)) {
+    const mainSessionInfo: ClaudeSessionInfo = {
+      name: MAIN_SESSION_NAME,
+      cwd: config.defaultCwd,
+      threadId: null,
+      isMain: true,
+      claudeSessionId: null,
+      state: "idle",
+      usage: { inputTokens: 0, outputTokens: 0 },
+      additionalAllowedTools: new Set(),
+    };
+    sessionMgr.registerSession(mainSessionInfo);
+  }
 
   // 4. イベントハンドラ登録
   discord.onReady(async () => {

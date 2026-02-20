@@ -128,14 +128,27 @@ async function handleThreadMessage(message: Message): Promise<void> {
   }
 
   const threadId = thread.id;
-  const session = sessionManager.getSessionByThreadId(threadId);
+  let session = sessionManager.getSessionByThreadId(threadId);
 
   if (!session) {
-    logger.warn(`No session found for thread: ${threadId}`);
-    await thread.send(
-      "エラー: このスレッドに対応するセッションが見つかりません。",
-    );
-    return;
+    // セッションが見つからない場合、自動復旧を試みる
+    logger.info(`No session found for thread: ${threadId}, auto-recovering...`);
+
+    const sessionName = threadId;
+    const info: ClaudeSessionInfo = {
+      name: sessionName,
+      cwd: config.defaultCwd,
+      threadId,
+      isMain: false,
+      claudeSessionId: null,
+      state: "idle",
+      usage: { inputTokens: 0, outputTokens: 0 },
+      additionalAllowedTools: new Set(),
+    };
+
+    sessionManager.registerSession(info);
+    session = sessionManager.getSession(sessionName)!;
+    logger.info(`Session auto-recovered for thread: ${threadId} (new session, no previous context)`);
   }
 
   logger.info(
